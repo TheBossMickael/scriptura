@@ -46,7 +46,7 @@ Makefile, docker-compose.yml, .env.example
 
 ## INVARIANTS (non-negotiable; must hold in Foundry invariant tests)
 
-1. `wCBDC.totalSupply() == 3_000e6` — constant in V1. M0 only circulates, never created/destroyed after genesis.
+1. `wCBDC.totalSupply() == 1_000_000e6` — constant in V1. M0 only circulates, never created/destroyed after genesis.
 2. Every **interbank** M1 transfer moves an exactly equal amount of wCBDC between the two banks, **in the same transaction**. No M1 crosses banks without M0 settlement.
 3. `sEUR.totalSupply() <= DEP_A.balanceOf(stableCo)` at all times (100% coverage).
 4. Only allowlisted addresses (the two CommercialBank contracts) ever hold wCBDC.
@@ -80,8 +80,8 @@ A phase is not done if any invariant test fails.
 
 ### Constants
 - All tokens: **6 decimals**.
-- Genesis: wCBDC 1_500 per bank (3_000 total). DEP per bank: 6_000 / 4_000 to its two clients. Initial ratio 15%, regulatory threshold 10%. StableCo starts at zero. Relayer funded with sETH + `fund-check` alert; operators ~0.05; clients ~0.02 (for direct sEUR transfers only).
-- Bank balance-sheet line "loans = 8_500" is a **documented genesis convention**, not a token.
+- Genesis: wCBDC 500_000 per bank (1_000_000 total). DEP per bank: 2_400_000 / 1_600_000 to its two clients (4_000_000 total per bank). Initial ratio 12.5%, regulatory threshold 10%. StableCo starts at zero. Relayer funded with sETH + `fund-check` alert; operators ~0.05; clients ~0.02 (for direct sEUR transfers only).
+- Bank balance-sheet line "loans = 3_500_000" is a **documented genesis convention**, not a token (assets = 500_000 wCBDC + 3_500_000 loans = 4_000_000 = deposits).
 
 ### Hard vs soft constraint (deliberate design)
 - **Hard (physical)**: settlement reverts iff the paying bank's wCBDC balance is insufficient.

@@ -34,7 +34,7 @@ structurellement un EMT), doctrine Bagehot, Diamond-Dybvig (Nobel 2022).
 | **M1 / monnaie commerciale** | Passif d'une banque commerciale. Ton solde bancaire = une créance sur ta banque, pas des euros de banque centrale. |
 | **Chaîne des créances** | La monnaie de chaque étage est une dette de l'étage au-dessus : Alice → créance sur Banque A → créance sur BC. |
 | **Actif / passif** | Passif = ce que tu dois ; actif = ce que tu possèdes. Le bilan est *toujours* équilibré (identité comptable). |
-| **Réserves fractionnaires** | La banque détient ~15 % de ses dépôts en réserves ; le reste est prêté (« les crédits font les dépôts »). Hypothèse structurante : sans elle, aucun scénario de crise n'existe. |
+| **Réserves fractionnaires** | La banque détient ~12,5 % de ses dépôts en réserves ; le reste est prêté (« les crédits font les dépôts »). Hypothèse structurante : sans elle, aucun scénario de crise n'existe. |
 | **Solvabilité vs liquidité** | Solvable = actifs ≥ dettes. Liquide = capable de payer *maintenant*. Une banque solvable peut être illiquide (transformation de maturité : emprunter court, prêter long). |
 | **Ratio de réserves** | `wCBDC.balanceOf(bank) / DEP.totalSupply()`. Lors d'une sortie, numérateur et dénominateur baissent du même montant absolu → le ratio chute. |
 | **Bank run** | Phénomène de coordination (Diamond-Dybvig) : deux équilibres pour le même bilan. Premier arrivé, premier servi → courir devient rationnel si on croit que les autres courent. Pas besoin de baleine, une croyance suffit. |
@@ -185,12 +185,12 @@ on-chain, et rend la vue. **Le masquage front = UX ; la sécurité = `onlyRole` 
 
 | Poste | Valeur |
 |---|---|
-| wCBDC total (M0) | **3 000** — invariant V1 : constant |
-| Réserves Banque A / Banque B | 1 500 / 1 500 |
-| DEP-A : Alice1 / Alice2 | 6 000 / 4 000 (asymétrie volontaire) |
-| DEP-B : Bob1 / Bob2 | 6 000 / 4 000 |
-| Ratio initial / seuil réglementaire | 15 % / 10 % |
-| Ligne « prêts » au bilan des banques | 8 500 chacune — convention de genèse documentée, non tokenisée |
+| wCBDC total (M0) | **1 000 000** — invariant V1 : constant |
+| Réserves Banque A / Banque B | 500 000 / 500 000 |
+| DEP-A : Alice1 / Alice2 | 2 400 000 / 1 600 000 (asymétrie volontaire) |
+| DEP-B : Bob1 / Bob2 | 2 400 000 / 1 600 000 |
+| Ratio initial / seuil réglementaire | 12,5 % / 10 % |
+| Ligne « prêts » au bilan des banques | 3 500 000 chacune — convention de genèse documentée, non tokenisée |
 | StableCo | Démarre à 0 (premier mint en live = meilleure démo) |
 | sETH | Relayer : approvisionné + alerte de solde ; opérateurs : ~0,05 ; clients : ~0,02 (pour le P2P sEUR direct) |
 
@@ -200,7 +200,7 @@ Le script de genèse (Foundry) doit produire un état **comptablement cohérent*
 
 ## 9. Invariants (tests Foundry, dont invariant testing)
 
-1. `totalSupply(wCBDC) == 3 000` constant (V1) ; V2 : `ΔM0 == refinancements nets`.
+1. `totalSupply(wCBDC) == 1 000 000` constant (V1) ; V2 : `ΔM0 == refinancements nets`.
 2. Tout transfert inter-banques de M1 s'accompagne d'un mouvement wCBDC strictement égal, dans la même transaction.
 3. `totalSupply(sEUR) <= DEP.balanceOf(StableCo)` (couverture 100 %).
 4. Seules les adresses allowlistées détiennent de la wCBDC.

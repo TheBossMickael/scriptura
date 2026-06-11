@@ -1,0 +1,11 @@
+[profile.default]
+solc_version = "0.8.24"
+src = "src"
+test = "test"
+script = "script"
+out = "out"
+libs = ["lib"]
+optimizer = true
+optimizer_runs = 200
+# Deploy script writes addresses + START_BLOCK to ../deployments/<chain>.json (trap #6)
+fs_permissions = [{ access = "read-write", path = "../deployments" }]
