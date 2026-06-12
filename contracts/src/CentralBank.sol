@@ -17,15 +17,20 @@ contract CentralBank is AccessControl {
     WCBDC public immutable wcbdc;
 
     /// @notice Regulatory reserve ratio threshold in basis points (1_000 = 10%).
-    /// @dev Soft constraint only: consumed in Phase 2 to emit ReserveRatioBreached.
-    ///      It never blocks settlement (trap #4) — only insufficient wCBDC does.
+    /// @dev Soft constraint only: read by CommercialBank.checkReserveRatio to emit
+    ///      ReserveRatioBreached. It never blocks settlement (trap #4) — only
+    ///      insufficient wCBDC does.
     uint256 public reserveRatioThresholdBps;
+
+    /// @notice The SettlementEngine currently holding SETTLER_ROLE on the wCBDC.
+    address public settlementEngine;
 
     event BankRegistered(address indexed bank);
     event BankRemoved(address indexed bank);
     event CBDCMinted(address indexed bank, uint256 amount);
     event CBDCBurned(address indexed bank, uint256 amount);
     event ReserveRatioThresholdUpdated(uint256 previousBps, uint256 newBps);
+    event SettlementEngineUpdated(address indexed previousEngine, address indexed newEngine);
 
     error ThresholdAboveMax(uint256 bps);
 
@@ -74,6 +79,21 @@ contract CentralBank is AccessControl {
     function burnCBDC(address bank, uint256 amount) external onlyRole(OPERATOR_ROLE) {
         wcbdc.burn(bank, amount);
         emit CBDCBurned(bank, amount);
+    }
+
+    /// @notice Plugs a SettlementEngine into the wCBDC: grants it SETTLER_ROLE (the
+    ///         power to move reserves between banks), revoking the previous engine's.
+    /// @param engine The engine address (address(0) to unplug).
+    function setSettlementEngine(address engine) external onlyRole(OPERATOR_ROLE) {
+        address previous = settlementEngine;
+        if (previous != address(0)) {
+            wcbdc.revokeRole(wcbdc.SETTLER_ROLE(), previous);
+        }
+        if (engine != address(0)) {
+            wcbdc.grantRole(wcbdc.SETTLER_ROLE(), engine);
+        }
+        settlementEngine = engine;
+        emit SettlementEngineUpdated(previous, engine);
     }
 
     /// @notice Updates the regulatory reserve ratio threshold.
