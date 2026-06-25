@@ -11,6 +11,8 @@ import {WCBDC} from "../../src/WCBDC.sol";
 
 /// @notice End-to-end settlement flows on a full genesis-state system: intrabank,
 ///         interbank, ratio breach (soft), illiquidity (hard), freeze, conservation.
+///         Every payment travels the production path: client-signed EIP-712 intent,
+///         submitted by a relayer EOA distinct from the payer.
 contract SettlementIntegrationTest is Test {
     // Genesis constants — see CLAUDE.md "Constants" (recalibrated 2026-06-10)
     uint256 internal constant CBDC_PER_BANK = 500_000e6; // 1_000_000e6 total M0
@@ -29,12 +31,27 @@ contract SettlementIntegrationTest is Test {
     address internal cbOperator = makeAddr("centralBankOperator");
     address internal opA = makeAddr("bankAOperator");
     address internal opB = makeAddr("bankBOperator");
-    address internal alice1 = makeAddr("alice1");
-    address internal alice2 = makeAddr("alice2");
-    address internal bob1 = makeAddr("bob1");
-    address internal bob2 = makeAddr("bob2");
+    address internal relayer = makeAddr("relayer");
+
+    address internal alice1;
+    address internal alice2;
+    address internal bob1;
+    address internal bob2;
+
+    /// @dev Client signing keys, looked up by address when a payment is built.
+    mapping(address client => uint256 key) internal signingKey;
 
     function setUp() public {
+        uint256 key;
+        (alice1, key) = makeAddrAndKey("alice1");
+        signingKey[alice1] = key;
+        (alice2, key) = makeAddrAndKey("alice2");
+        signingKey[alice2] = key;
+        (bob1, key) = makeAddrAndKey("bob1");
+        signingKey[bob1] = key;
+        (bob2, key) = makeAddrAndKey("bob2");
+        signingKey[bob2] = key;
+
         // Mirrors the genesis script: M0 issuance, bank wiring, client onboarding,
         // deposit creation. Initial ratio 12.5% per bank, threshold 10%.
         centralBank = new CentralBank(cbOperator);
@@ -70,10 +87,38 @@ contract SettlementIntegrationTest is Test {
         vm.stopPrank();
     }
 
-    /// @dev Payer-initiated settlement through the engine's Phase 2 direct path.
+    /// @dev Builds and signs an EIP-712 intent for `from` (current nonce, 1h deadline).
+    ///      Kept separate from `_submit` because expectRevert/expectEmit bind to the NEXT
+    ///      external call — the view calls made here must happen before the cheatcode.
+    function _signed(address from, CommercialBank fromBank, CommercialBank toBank, address to, uint256 amount)
+        internal
+        view
+        returns (SettlementEngine.PaymentIntent memory intent, bytes memory signature)
+    {
+        intent = SettlementEngine.PaymentIntent({
+            from: from,
+            fromBank: address(fromBank),
+            toBank: address(toBank),
+            to: to,
+            amount: amount,
+            nonce: engine.nonces(from),
+            deadline: block.timestamp + 1 hours
+        });
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signingKey[from], engine.hashIntent(intent));
+        signature = abi.encodePacked(r, s, v);
+    }
+
+    /// @dev Submits a signed intent as the relayer — never the payer (production path).
+    function _submit(SettlementEngine.PaymentIntent memory intent, bytes memory signature) internal {
+        vm.prank(relayer);
+        engine.executeIntent(intent, signature);
+    }
+
+    /// @dev Full gasless payment: sign then relay.
     function _pay(address from, CommercialBank fromBank, CommercialBank toBank, address to, uint256 amount) internal {
-        vm.prank(from);
-        engine.settle(address(fromBank), address(toBank), to, amount);
+        (SettlementEngine.PaymentIntent memory intent, bytes memory signature) =
+            _signed(from, fromBank, toBank, to, amount);
+        _submit(intent, signature);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -111,9 +156,12 @@ contract SettlementIntegrationTest is Test {
     //////////////////////////////////////////////////////////////*/
 
     function test_InterbankPayment_SettlesInCentralBankMoney() public {
+        (SettlementEngine.PaymentIntent memory intent, bytes memory signature) =
+            _signed(alice1, bankA, bankB, bob1, 100_000e6);
+
         vm.expectEmit(true, true, true, true, address(engine));
         emit SettlementEngine.Settled(alice1, address(bankA), address(bankB), bob1, 100_000e6);
-        _pay(alice1, bankA, bankB, bob1, 100_000e6);
+        _submit(intent, signature);
 
         // INVARIANT 2/7: equal burn, wCBDC move and mint, one transaction.
         assertEq(depA.balanceOf(alice1), 2_300_000e6);
@@ -124,6 +172,9 @@ contract SettlementIntegrationTest is Test {
         assertEq(depB.totalSupply(), 4_100_000e6);
         assertEq(wcbdc.totalSupply(), 1_000_000e6); // M0 circulates, never created
 
+        // The payer's intent nonce advanced — the relayer paid gas, alice1 paid deposits.
+        assertEq(engine.nonces(alice1), 1);
+
         // Payer's ratio degrades (still healthy), receiver's mechanically improves.
         assertEq(bankA.reserveRatioBps(), 1_025); // 400_000 / 3_900_000
         assertEq(bankB.reserveRatioBps(), 1_463); // 600_000 / 4_100_000
@@ -132,9 +183,12 @@ contract SettlementIntegrationTest is Test {
     function test_InterbankPayment_BreachesRatioAndStillSettles() public {
         // 350_000 / 3_850_000 = 9.09% < 10%: the paying bank flags itself STRESSED but
         // keeps paying — the ratio is monitored, never enforced per transaction (trap #4).
+        (SettlementEngine.PaymentIntent memory intent, bytes memory signature) =
+            _signed(alice1, bankA, bankB, bob1, 150_000e6);
+
         vm.expectEmit(true, false, false, true, address(bankA));
         emit CommercialBank.ReserveRatioBreached(address(bankA), 909, 1_000);
-        _pay(alice1, bankA, bankB, bob1, 150_000e6);
+        _submit(intent, signature);
 
         assertEq(depB.balanceOf(bob1), 2_550_000e6); // settled despite the breach
         assertEq(bankA.reserves(), 350_000e6);
@@ -147,8 +201,10 @@ contract SettlementIntegrationTest is Test {
         assertEq(bankA.reserves(), 0);
 
         // ILLIQUID: the next interbank payment hits the hard physical constraint…
+        (SettlementEngine.PaymentIntent memory intent, bytes memory signature) =
+            _signed(alice2, bankA, bankB, bob2, 1e6);
         vm.expectRevert(abi.encodeWithSelector(SettlementEngine.InsufficientReserves.selector, address(bankA), 1e6, 0));
-        _pay(alice2, bankA, bankB, bob2, 1e6);
+        _submit(intent, signature);
 
         // …but illiquid is not frozen: intrabank book transfers need no reserves.
         _pay(alice2, bankA, bankA, alice1, 100_000e6);
@@ -165,18 +221,29 @@ contract SettlementIntegrationTest is Test {
         vm.prank(opA);
         bankA.freeze();
 
+        SettlementEngine.PaymentIntent memory intent;
+        bytes memory signature;
+
         // Intrabank at the frozen bank: blocked.
+        (intent, signature) = _signed(alice1, bankA, bankA, alice2, 1e6);
         vm.expectRevert(Pausable.EnforcedPause.selector);
-        _pay(alice1, bankA, bankA, alice2, 1e6);
+        _submit(intent, signature);
 
         // Outgoing interbank: blocked (the DEP-A burn is paused).
+        (intent, signature) = _signed(alice1, bankA, bankB, bob1, 1e6);
         vm.expectRevert(Pausable.EnforcedPause.selector);
-        _pay(alice1, bankA, bankB, bob1, 1e6);
+        _submit(intent, signature);
 
         // Incoming interbank: blocked too (the DEP-A mint is paused) — money cannot
         // enter a frozen bank either.
+        (intent, signature) = _signed(bob1, bankB, bankA, alice1, 1e6);
         vm.expectRevert(Pausable.EnforcedPause.selector);
-        _pay(bob1, bankB, bankA, alice1, 1e6);
+        _submit(intent, signature);
+
+        // A reverted intent consumes nothing: the whole tx rolled back, nonces included,
+        // so the same signed intents could be resubmitted after the unfreeze.
+        assertEq(engine.nonces(alice1), 0);
+        assertEq(engine.nonces(bob1), 0);
 
         // Bank B is unaffected: the freeze is strictly local to A.
         _pay(bob1, bankB, bankB, bob2, 50_000e6);

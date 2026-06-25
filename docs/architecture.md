@@ -129,3 +129,91 @@ bootstrapper en Phase 2 (conformément au phasage CLAUDE.md).
 5 invariants à 128 runs × 64 de profondeur, 0 revert), `forge fmt --check` propre,
 dry-run de `Deploy.s.sol` sur EVM locale OK (écrit les 7 adresses + `START_BLOCK` dans
 `deployments/local.json`).
+
+---
+
+## Phase 3 — Intents EIP-712 + relayer + infra (2026-06-13)
+
+### Construit
+
+- **`contracts/src/SettlementEngine.sol`** (refondu) — hérite d'OZ `EIP712` et `Nonces` ;
+  `struct PaymentIntent{from, fromBank, toBank, to, amount, nonce, deadline}` +
+  `PAYMENT_INTENT_TYPEHASH` ; **`executeIntent(intent, signature)`** : deadline (inclusive)
+  → `ECDSA.recover` (revert `InvalidIntentSigner`) → `_useCheckedNonce` (anti-replay,
+  INVARIANT 6) → `_settle` (cœur Phase 2 inchangé) → event `IntentExecuted(digest, from,
+  nonce)`. `hashIntent(intent)` vue (parité de digest relayer/front/tests + clé
+  d'idempotence). **Chemin direct `settle()` retiré** (échafaudage Phase 2). L'engine est
+  **relay-agnostique** : n'importe qui peut soumettre un intent signé.
+- **Tests contrats** — `SettlementEngine.t.sol` refondu autour des intents (25, dont
+  deadline/wrong-signer/tampered/replay/nonce-gap/any-relayer/frozen-bank/`IntentExecuted`/
+  digest EIP-712 recalculé) ; `Settlement.t.sol` (8) et le handler d'invariants convertis
+  aux intents signés (soumetteur ≠ payeur, le payeur signe via `vm.sign`). Suite à
+  **112 verts**, invariants toujours à 0 revert.
+- **Genèse complète** — `GenesisSeed.s.sol` (base abstraite, logique idempotente :
+  register/credit clients + funding sETH par top-up), `Deploy.s.sol` (seed complet + JSON
+  enrichi : 7 contrats + annuaire des 8 acteurs + relayer + `chainId` + `START_BLOCK`),
+  `Seed.s.sol` (re-seed seul, idempotent).
+- **Relayer** (`relayer/`, Node 20 + TS + Fastify + zod + viem) — `POST /intent`
+  (validation zod ; body `{type:"payment", intent, signature}`, le discriminateur `type`
+  anticipe les messages sEUR de la Phase 4 ; pré-checks signature/deadline/nonce +
+  `simulateContract` décodant les custom errors ; envoi sérialisé ; cache d'idempotence
+  mémoire ; watcher de receipt `submitted→confirmed|failed`) ; `GET /health` ; boot
+  (sanity chainId + adresse relayer, resync du nonce pending — piège #5) ; `fundCheck` ;
+  smoke `send-intent.ts` + vitest (16).
+- **Infra** — Makefile complété (`anvil`, `deploy-local/-sepolia`, `seed`, `up/down`,
+  `fund-check`, `relayer-dev`), `docker-compose.yml` (service relayer seul ; front en
+  Phase 5), `Dockerfile`, `.env.example`, `.gitignore`.
+
+### Choix consignés
+
+1. **EOA relayer = clé dédiée isolée** (et non un acteur de la liste verrouillée). À l'origine
+   HD index 8 ; **abandonné le 2026-06-13 au profit de clés individuelles** (cf. choix 6).
+2. **`settle()` retiré, engine relay-agnostique** : la censure du relayer est *opérationnelle*,
+   pas *contractuelle* (un client peut s'auto-relayer en payant son gas). **Garde-fou
+   Phase 4** : `StableCo` (un contrat) ne peut pas signer ECDSA → la composition cross-bank
+   ajoutera son propre point d'entrée restreint sur `_settle` (rien à scaffolder maintenant).
+3. **Event `IntentExecuted(digest, from, nonce)`** : corrélation signé→soumis→confirmé pour
+   le relayer et le front (Phase 5).
+4. **Relayer : Fastify + zod ; réponse à la soumission (pas au receipt)** — le front suivra
+   « confirmé » via la chaîne (projet.md §7) ; watcher de receipt fire-and-forget qui met à
+   jour le cache d'idempotence ; file d'envoi sérialisée + `nonceManager` viem.
+5. **`Seed.s.sol` idempotent séparé** ; `deployments/<chain>.json` enrichi (acteurs, relayer,
+   chainId).
+6. **Pas de phrase mnémonique — clés privées individuelles + adresses clients** (décision
+   utilisateur 2026-06-13, appliquée même en local). Le `.env` porte les `*_PK` des rôles
+   *signataires serveur* (deployer/BC, opérateurs A/B) et les `*_ADDRESS` de tout le reste ;
+   le relayer ne détient que `RELAYER_PK` (EOA gas-only) et n'a aucun moyen de dériver les
+   clés des clients — frontière cryptographique cohérente avec « l'EOA décide ». `make anvil`
+   utilise la mnémonique Anvil par défaut (ses comptes connus = les clés publiques du `.env`).
+   Les clés *clients* ne vivent jamais dans le backend : MetaMask en Phase 5, et la seule
+   exception est `ALICE1_PK` du smoke test (clé Anvil publique, dev only).
+
+### TODO doc (Phase 6 — `threat-model.md`)
+
+- **Relay-agnostique** : censure du relayer = opérationnelle, pas contractuelle ;
+  auto-relais possible (un client soumet lui-même son intent signé en payant son gas).
+- **Épuisement du sETH du relayer** : un client malveillant peut drainer le gas du relayer
+  par spam de micro-intents *valides* (qui passent tous les pré-checks). Non traité en V1
+  (4 clients connus), mais à nommer comme surface d'attaque.
+- **Gestion des secrets** : motiver l'abandon de la mnémonique (secret racine maximal +
+  capacité d'usurpation des clients) ; sur Sepolia, keystore Foundry chiffré pour les clés
+  de déploiement, `RELAYER_PK` isolé (service long-running, EOA jetable).
+
+### Pistes actées (phases ultérieures, hors Phase 3)
+
+- **Indexeur Ponder** (Phase 5, avec le front) pour les métriques agrégées plutôt qu'un scan
+  depuis `START_BLOCK` à chaque chargement — DB *dérivée*, n'enfreint pas « pas de DB ».
+- **Hébergement** front + relayer (Phase 6) pour des paiements gasless 24/7 et une démo en URL.
+- **Standards de token institutionnels** : ERC-1404 (Simple Restricted Token) et ERC-3643
+  (T-REX + ONCHAINID) — **documentés seulement** pour l'instant (choix utilisateur
+  2026-06-13) ; pas de refactor des tokens (toucherait des contrats testés + les invariants).
+
+### Vérification
+
+`forge build` propre, `forge test` **112/112 verts** (95 unitaires + 8 intégration +
+5 invariants à 128 runs × 64, 0 revert), `forge fmt --check` propre, relayer `typecheck`
++ `vitest` (16) verts. **E2E local** : `make anvil` → `make deploy-local` (genèse cohérente,
+JSON enrichi) → relayer (`/health` vert, boot-check `RELAYER_PK` ↔ déploiement) → smoke
+`send-intent` (intent alice1→bob1 signé, posté, miné, `nonces(alice1)==1`, réserves
+500 000→499 000 / 501 000, **idempotence OK**) ; rejets vérifiés : signature malformée 400,
+schéma 400, nonce périmé 409 ; `make seed` ré-exécuté = « No transactions to broadcast ».

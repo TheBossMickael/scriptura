@@ -2,4 +2,9 @@
 node_modules/
 contracts/cache/
 contracts/out/
+contracts/broadcast/
+relayer/dist/
+# tsx writes temp files under a literal "undefined" dir when the temp path env is
+# unset in the spawning shell — never source, never commit.
+relayer/undefined/
 frontend/dist/

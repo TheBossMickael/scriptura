@@ -1,0 +1,31 @@
+# Two-Tier Money Sandbox — orchestration (Phase 3: relayer only; the `front`
+# service joins in Phase 5).
+#
+# Usage: make up [CHAIN=local|sepolia]  /  make down
+# CHAIN=local expects an Anvil node on the HOST (make anvil), reached from the
+# container via host.docker.internal.
+
+services:
+  relayer:
+    build: ./relayer
+    env_file: .env
+    environment:
+      CHAIN_NAME: ${CHAIN_NAME:-local}
+      DEPLOYMENTS_DIR: /app/deployments
+      LOCAL_RPC_URL: http://host.docker.internal:8545
+      # The container always listens on 3001; RELAYER_PORT from .env only moves the
+      # HOST side of the mapping below.
+      RELAYER_PORT: "3001"
+    volumes:
+      - ./deployments:/app/deployments:ro
+    ports:
+      - "${RELAYER_PORT:-3001}:3001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {Nonces} from "@openzeppelin/contracts/utils/Nonces.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {CentralBank} from "./CentralBank.sol";
 import {CommercialBank} from "./CommercialBank.sol";
 import {WCBDC} from "./WCBDC.sol";
@@ -10,11 +13,32 @@ import {WCBDC} from "./WCBDC.sol";
 ///         transfer (same bank, no wCBDC) or as an interbank settlement — burn the
 ///         payer's deposits, move wCBDC between bank reserves, mint deposits to the
 ///         payee — all within one transaction (INVARIANTS 2 and 7).
-/// @dev Stateless and bank-agnostic: banks are validated against the CentralBank
+///         Payments enter exclusively as EIP-712 `PaymentIntent`s signed by the payer
+///         and submitted by anyone (normally the gasless relayer): the engine is
+///         relay-agnostic, so relayer censorship is operational, never contractual —
+///         a client may always self-relay by paying their own gas.
+/// @dev Stateless apart from intent nonces: banks are validated against the CentralBank
 ///      registry per call, deposit tokens discovered via `CommercialBank.depositToken()`.
-///      Phase 3 adds EIP-712 `PaymentIntent` verification (`executeIntent`) on top of
-///      the same `_settle` core.
-contract SettlementEngine {
+///      Intent nonces are sequential per payer (OZ Nonces); they deliberately differ from
+///      sEUR's random EIP-3009 nonces (trap #3) — do not unify the two systems.
+contract SettlementEngine is EIP712, Nonces {
+    /// @notice A client-signed payment order. Field order matches CLAUDE.md.
+    /// @dev `nonce` must equal `nonces(from)` at execution time (sequential, anti-replay);
+    ///      `deadline` is the last valid UNIX timestamp, inclusive (ERC20Permit semantics).
+    struct PaymentIntent {
+        address from;
+        address fromBank;
+        address toBank;
+        address to;
+        uint256 amount;
+        uint256 nonce;
+        uint256 deadline;
+    }
+
+    bytes32 public constant PAYMENT_INTENT_TYPEHASH = keccak256(
+        "PaymentIntent(address from,address fromBank,address toBank,address to,uint256 amount,uint256 nonce,uint256 deadline)"
+    );
+
     /// @notice The central bank, used as the registry of valid commercial banks.
     CentralBank public immutable centralBank;
 
@@ -23,34 +47,73 @@ contract SettlementEngine {
 
     event Settled(address indexed from, address indexed fromBank, address indexed toBank, address to, uint256 amount);
     event IntrabankTransfer(address indexed bank, address indexed from, address indexed to, uint256 amount);
+    event IntentExecuted(bytes32 indexed digest, address indexed from, uint256 nonce);
 
     error ZeroAmount();
     error NotRegisteredBank(address bank);
     error NotBankClient(address bank, address account);
     error InsufficientReserves(address bank, uint256 required, uint256 available);
+    error IntentExpired(uint256 deadline);
+    error InvalidIntentSigner(address recovered, address expected);
 
     /// @param centralBank_ The CentralBank contract (bank registry + wCBDC source).
-    constructor(CentralBank centralBank_) {
+    constructor(CentralBank centralBank_) EIP712("SettlementEngine", "1") {
         centralBank = centralBank_;
         wcbdc = centralBank_.wcbdc();
     }
 
-    /// @notice Direct, payer-initiated settlement: `msg.sender` pays `to`.
-    /// @dev Phase 2 scaffolding — to be removed in Phase 3 when EIP-712 intents land.
-    ///      The routing rule reserves the dual gasless/direct path to sEUR alone, and the
-    ///      relayer-censorship scenario (V2) requires deposits to be exclusively
-    ///      intermediated. Phase 3's `executeIntent` will reuse `_settle` unchanged.
-    /// @param fromBank The payer's bank (must be registered with the CentralBank).
-    /// @param toBank The payee's bank (must be registered with the CentralBank).
-    /// @param to The payee (must be a client of `toBank`).
-    /// @param amount Amount in 6-decimals units.
-    function settle(address fromBank, address toBank, address to, uint256 amount) external {
-        _settle(msg.sender, fromBank, toBank, to, amount);
+    /// @notice Executes a payer-signed payment intent. Callable by anyone holding a valid
+    ///         signature — the submitter (usually the relayer) pays gas, the payer's
+    ///         signature is the sole authorization.
+    /// @dev Verification order: deadline, ECDSA signature, sequential nonce
+    ///      (`_useCheckedNonce` reverts with OZ `InvalidAccountNonce` on replay or gap,
+    ///      INVARIANT 6), then settlement. The digest is emitted so off-chain consumers
+    ///      (relayer cache, frontend status tracking) can correlate intent and execution.
+    /// @param intent The payment order, signed by `intent.from`.
+    /// @param signature ECDSA signature of the EIP-712 digest (`hashIntent(intent)`).
+    function executeIntent(PaymentIntent calldata intent, bytes calldata signature) external {
+        if (block.timestamp > intent.deadline) revert IntentExpired(intent.deadline);
+
+        bytes32 digest = _hashIntent(intent);
+        address recovered = ECDSA.recover(digest, signature);
+        if (recovered != intent.from) revert InvalidIntentSigner(recovered, intent.from);
+
+        _useCheckedNonce(intent.from, intent.nonce);
+        _settle(intent.from, intent.fromBank, intent.toBank, intent.to, intent.amount);
+        emit IntentExecuted(digest, intent.from, intent.nonce);
     }
 
-    /// @dev Settlement core, shared by the direct path (Phase 2) and the intent path
-    ///      (Phase 3). Checks-effects-interactions: all external calls target trusted
-    ///      system contracts validated against the CentralBank registry.
+    /// @notice EIP-712 digest of a payment intent — what the payer signs. Exposed so the
+    ///         relayer, frontend and tests share one canonical hashing implementation
+    ///         (also the relayer's idempotency key).
+    /// @param intent The payment order to hash.
+    function hashIntent(PaymentIntent calldata intent) external view returns (bytes32) {
+        return _hashIntent(intent);
+    }
+
+    /// @dev EIP-712 structured hash bound to this chain and contract (domain separator).
+    function _hashIntent(PaymentIntent calldata intent) internal view returns (bytes32) {
+        return _hashTypedDataV4(
+            keccak256(
+                abi.encode(
+                    PAYMENT_INTENT_TYPEHASH,
+                    intent.from,
+                    intent.fromBank,
+                    intent.toBank,
+                    intent.to,
+                    intent.amount,
+                    intent.nonce,
+                    intent.deadline
+                )
+            )
+        );
+    }
+
+    /// @dev Settlement core, shared history: served the Phase 2 direct path, now reached
+    ///      only through `executeIntent`. Phase 4's StableCo (a contract, unable to
+    ///      ECDSA-sign) will get its own restricted entry point on top of this.
+    ///      Checks-effects-interactions: all external calls target trusted system
+    ///      contracts validated against the CentralBank registry.
     function _settle(address from, address fromBank, address toBank, address to, uint256 amount) internal {
         if (amount == 0) revert ZeroAmount();
         if (!centralBank.isRegisteredBank(fromBank)) revert NotRegisteredBank(fromBank);

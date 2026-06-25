@@ -34,12 +34,23 @@ contract InvariantsTest is Test {
     address internal cbOperator = makeAddr("centralBankOperator");
     address internal opA = makeAddr("bankAOperator");
     address internal opB = makeAddr("bankBOperator");
-    address internal alice1 = makeAddr("alice1");
-    address internal alice2 = makeAddr("alice2");
-    address internal bob1 = makeAddr("bob1");
-    address internal bob2 = makeAddr("bob2");
+
+    // Clients sign EIP-712 intents in the handler, so they carry real keys.
+    address internal alice1;
+    uint256 internal alice1Key;
+    address internal alice2;
+    uint256 internal alice2Key;
+    address internal bob1;
+    uint256 internal bob1Key;
+    address internal bob2;
+    uint256 internal bob2Key;
 
     function setUp() public {
+        (alice1, alice1Key) = makeAddrAndKey("alice1");
+        (alice2, alice2Key) = makeAddrAndKey("alice2");
+        (bob1, bob1Key) = makeAddrAndKey("bob1");
+        (bob2, bob2Key) = makeAddrAndKey("bob2");
+
         centralBank = new CentralBank(cbOperator);
         wcbdc = centralBank.wcbdc();
         bankA = new CommercialBank(opA, centralBank, "Bank A Deposit", "DEP-A");
@@ -72,7 +83,18 @@ contract InvariantsTest is Test {
         bankB.creditClient(bob2, DEP_CLIENT_2);
         vm.stopPrank();
 
-        handler = new SettlementHandler(engine, [bankA, bankB], [opA, opB], [[alice1, alice2], [bob1, bob2]]);
+        handler = new SettlementHandler(
+            engine,
+            [bankA, bankB],
+            [opA, opB],
+            [
+                [
+                    SettlementHandler.ClientAccount(alice1, alice1Key),
+                    SettlementHandler.ClientAccount(alice2, alice2Key)
+                ],
+                [SettlementHandler.ClientAccount(bob1, bob1Key), SettlementHandler.ClientAccount(bob2, bob2Key)]
+            ]
+        );
         targetContract(address(handler));
     }
 
