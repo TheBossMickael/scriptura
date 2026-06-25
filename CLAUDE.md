@@ -63,7 +63,8 @@ A phase is not done if any invariant test fails.
 
 ### Actors & accounts
 - Guiding principle: **EOA decides, contract enforces, token accounts.** All rule-bound funds live in contracts, never on EOAs.
-- 8 EOAs from one HD mnemonic (indexes 0–7): deployer/centralBankOperator, bankAOperator, bankBOperator, stableCoOperator, alice1, alice2, bob1, bob2.
+- 8 actor EOAs: deployer/centralBankOperator, bankAOperator, bankBOperator, stableCoOperator, alice1, alice2, bob1, bob2 — plus a dedicated relayer EOA (infra, not an actor).
+- **No HD mnemonic (decided 2026-06-13).** The `.env` holds an individual private key per *server-signing* role (`*_PK`: central bank/deployer, bank A/B operators, relayer) and **addresses only** for everyone else (`*_ADDRESS`: stableCo operator, clients). The relayer holds only its own gas-only key and so cannot derive or impersonate clients — the "EOA decides" boundary is cryptographic, not conventional. Clients' keys live in MetaMask (frontend) / the smoke test alone. Scripts read `vm.envUint`/`vm.envAddress`; on Sepolia prefer an encrypted Foundry keystore for the operator keys. `make anvil` uses Anvil's default mnemonic whose well-known accounts equal those public `.env` keys.
 - Clients are bare EOAs (no contracts). `StableCo` **contract** is registered as a client of Bank A.
 
 ### Contracts (7 source files, 9 deployed instances)

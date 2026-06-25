@@ -62,7 +62,12 @@ rien garantir ; un contrat *est* la règle (invariants testables, composition po
 - Bob1, Bob2 : clients de la Banque B
 - Ils ne signent que des messages off-chain (intents EIP-712, autorisations EIP-3009) + transferts directs de sEUR.
 
-**Total : 8 EOA**, dérivées d'un seul mnémonique HD (indexes 0–7).
+**Total : 8 EOA acteurs** + une EOA relayer dédiée (infra). **Pas de mnémonique HD**
+(décision 2026-06-13) : le `.env` porte une clé privée individuelle par rôle *signataire
+serveur* (deployer/BC, opérateurs A/B, relayer) et des **adresses seulement** pour le
+reste (opérateur StableCo, clients). Le relayer ne détient que sa propre clé (gas) et ne
+peut donc pas usurper les clients — frontière cryptographique cohérente avec « l'EOA
+décide ». Les clés des clients vivent dans MetaMask, jamais dans le backend.
 Le contrat `StableCo.sol` est **enregistré comme client** de la Banque A (un contrat peut être client).
 
 ---

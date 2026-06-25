@@ -208,6 +208,15 @@ dry-run de `Deploy.s.sol` sur EVM locale OK (écrit les 7 adresses + `START_BLOC
   (T-REX + ONCHAINID) — **documentés seulement** pour l'instant (choix utilisateur
   2026-06-13) ; pas de refactor des tokens (toucherait des contrats testés + les invariants).
 
+### Limite connue (à gérer côté front en Phase 5)
+
+Le pré-check de nonce du relayer est **séquentiel et synchrone** : un second intent du
+**même** client est rejeté en `409 nonce_mismatch` tant que le premier n'est pas miné
+(`nonces(from)` n'a pas encore avancé). Pas de paiements en rafale du même payeur. Pour la
+démo (4 clients) c'est sans impact ; **le front (Phase 5) doit désactiver le bouton
+« payer » jusqu'à confirmation** du paiement précédent du client (cohérent avec le suivi
+signé→soumis→confirmé). Une vraie file de nonces côté relayer est une option V2 si besoin.
+
 ### Vérification
 
 `forge build` propre, `forge test` **112/112 verts** (95 unitaires + 8 intégration +
