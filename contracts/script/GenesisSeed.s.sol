@@ -38,10 +38,14 @@ abstract contract GenesisSeed is Script {
 
     /// @notice Keys of the EOAs that broadcast during deploy/seed. Clients and the relayer
     ///         never broadcast here, so their private keys stay out of these scripts.
+    /// @dev The StableCo operator joined this set in Phase 4: it signs the StableCo
+    ///      deployment (and pause() at runtime), so it became a server-signing role with
+    ///      its own *_PK — consistent with the individual-keys model.
     struct OperatorKeys {
         uint256 deployer;
         uint256 bankAOperator;
         uint256 bankBOperator;
+        uint256 stableCoOperator;
     }
 
     error FundingTransferFailed(address recipient);
@@ -54,10 +58,11 @@ abstract contract GenesisSeed is Script {
         k.deployer = vm.envUint("CENTRAL_BANK_OPERATOR_PK");
         k.bankAOperator = vm.envUint("BANK_A_OPERATOR_PK");
         k.bankBOperator = vm.envUint("BANK_B_OPERATOR_PK");
+        k.stableCoOperator = vm.envUint("STABLECO_OPERATOR_PK");
         a.centralBankOperator = vm.addr(k.deployer);
         a.bankAOperator = vm.addr(k.bankAOperator);
         a.bankBOperator = vm.addr(k.bankBOperator);
-        a.stableCoOperator = vm.envAddress("STABLECO_OPERATOR_ADDRESS");
+        a.stableCoOperator = vm.addr(k.stableCoOperator);
         a.alice1 = vm.envAddress("ALICE1_ADDRESS");
         a.alice2 = vm.envAddress("ALICE2_ADDRESS");
         a.bob1 = vm.envAddress("BOB1_ADDRESS");
@@ -74,6 +79,16 @@ abstract contract GenesisSeed is Script {
         if (!bank.isClient(client2)) bank.registerClient(client2);
         if (dep.balanceOf(client1) == 0) bank.creditClient(client1, DEP_CLIENT_1);
         if (dep.balanceOf(client2) == 0) bank.creditClient(client2, DEP_CLIENT_2);
+        vm.stopBroadcast();
+    }
+
+    /// @dev Grants the narrow FAUCET_ROLE to the relayer on a bank (Option B onboarding),
+    ///      idempotently. Signed by the bank operator (admin of the role). The relayer keeps
+    ///      its single key; this just lets that key call `onboard` (register + capped credit).
+    function _grantFaucet(uint256 operatorKey, CommercialBank bank, address relayer) internal {
+        if (bank.hasRole(bank.FAUCET_ROLE(), relayer)) return;
+        vm.startBroadcast(operatorKey);
+        bank.grantRole(bank.FAUCET_ROLE(), relayer);
         vm.stopBroadcast();
     }
 

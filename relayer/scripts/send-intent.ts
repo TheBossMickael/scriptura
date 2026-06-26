@@ -8,11 +8,19 @@
  * sign). It reads ALICE1_PK from the env — a public Anvil key locally, NEVER a real key.
  * In production clients sign from their own wallets; the backend only ever holds addresses.
  */
-import { createPublicClient, formatUnits, getAddress, http, parseUnits, type Address, type Hex } from "viem";
+import { randomBytes } from "node:crypto";
+import { createPublicClient, formatUnits, getAddress, http, parseUnits, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { erc20Abi, settlementEngineAbi } from "../src/abi.js";
+import { erc20Abi, settlementEngineAbi, stableCoAbi } from "../src/abi.js";
 import { loadConfig } from "../src/config.js";
-import { intentDomain, PAYMENT_INTENT_TYPES } from "../src/intent.js";
+import {
+  intentDomain,
+  MINT_INTENT_TYPES,
+  PAYMENT_INTENT_TYPES,
+  seurDomain,
+  stableCoDomain,
+  TRANSFER_WITH_AUTHORIZATION_TYPES,
+} from "../src/intent.js";
 
 const cfg = loadConfig();
 const relayerUrl = process.env.RELAYER_URL ?? `http://127.0.0.1:${cfg.port}`;
@@ -28,7 +36,7 @@ if (!bob1Address) {
 }
 
 const publicClient = createPublicClient({ transport: http(cfg.rpcUrl) });
-const { settlementEngine: engine, bankA, bankB, depA, depB, chainId } = cfg.deployments;
+const { settlementEngine: engine, stableCo, seur, bankA, bankB, depA, depB, chainId } = cfg.deployments;
 
 const alice1 = privateKeyToAccount(alice1Pk as Hex);
 const bob1 = getAddress(bob1Address);
@@ -109,3 +117,78 @@ if (replay.idempotent !== true || replay.txHash !== first.txHash) {
   process.exit(1);
 }
 console.log("idempotency check OK");
+
+/*//////////////////////////////////////////////////////////////
+              PHASE 4 — sEUR MINT + GASLESS P2P
+//////////////////////////////////////////////////////////////*/
+
+const seurBalances = async (label: string) => {
+  const [a, b] = await Promise.all([
+    publicClient.readContract({ address: seur, abi: erc20Abi, functionName: "balanceOf", args: [alice1.address] }),
+    publicClient.readContract({ address: seur, abi: erc20Abi, functionName: "balanceOf", args: [bob1] }),
+  ]);
+  console.log(`${label}: alice1 ${formatUnits(a, 6)} sEUR | bob1 ${formatUnits(b, 6)} sEUR`);
+};
+
+const deadline = () => BigInt(Math.floor(Date.now() / 1000) + 3600);
+
+console.log("\n--- mint sEUR (alice1, same-bank) ---");
+await seurBalances("before");
+
+const mintNonce = await publicClient.readContract({
+  address: stableCo,
+  abi: stableCoAbi,
+  functionName: "nonces",
+  args: [alice1.address],
+});
+const mintIntent = { minter: alice1.address, minterBank: bankA, amount: parseUnits("500", 6), nonce: mintNonce, deadline: deadline() };
+const mintSig = await alice1.signTypedData({
+  domain: stableCoDomain(chainId, stableCo),
+  types: MINT_INTENT_TYPES,
+  primaryType: "MintIntent",
+  message: mintIntent,
+});
+const mintRes = await post({
+  type: "mint",
+  intent: { ...mintIntent, amount: mintIntent.amount.toString(), nonce: mintIntent.nonce.toString(), deadline: mintIntent.deadline.toString() },
+  signature: mintSig,
+});
+if (!mintRes.txHash) {
+  console.error("relayer rejected the mint, aborting");
+  process.exit(1);
+}
+await publicClient.waitForTransactionReceipt({ hash: mintRes.txHash as Hex });
+await seurBalances("after mint");
+
+console.log("\n--- gasless P2P sEUR (alice1 -> bob1, EIP-3009) ---");
+const authNonce = `0x${randomBytes(32).toString("hex")}` as Hex;
+const auth = {
+  from: alice1.address,
+  to: bob1,
+  value: parseUnits("100", 6),
+  validAfter: 0n,
+  validBefore: deadline(),
+  nonce: authNonce,
+};
+const authSig = await alice1.signTypedData({
+  domain: seurDomain(chainId, seur),
+  types: TRANSFER_WITH_AUTHORIZATION_TYPES,
+  primaryType: "TransferWithAuthorization",
+  message: auth,
+});
+const authRes = await post({
+  type: "transfer3009",
+  authorization: {
+    ...auth,
+    value: auth.value.toString(),
+    validAfter: auth.validAfter.toString(),
+    validBefore: auth.validBefore.toString(),
+  },
+  signature: authSig,
+});
+if (!authRes.txHash) {
+  console.error("relayer rejected the gasless transfer, aborting");
+  process.exit(1);
+}
+await publicClient.waitForTransactionReceipt({ hash: authRes.txHash as Hex });
+await seurBalances("after gasless transfer");

@@ -5,6 +5,8 @@ import {console2} from "forge-std/console2.sol";
 import {CentralBank} from "../src/CentralBank.sol";
 import {CommercialBank} from "../src/CommercialBank.sol";
 import {SettlementEngine} from "../src/SettlementEngine.sol";
+import {StableCo} from "../src/StableCo.sol";
+import {StableEUR} from "../src/StableEUR.sol";
 import {WCBDC} from "../src/WCBDC.sol";
 import {GenesisSeed} from "./GenesisSeed.s.sol";
 
@@ -23,6 +25,8 @@ contract Deploy is GenesisSeed {
         CommercialBank bankA;
         CommercialBank bankB;
         SettlementEngine engine;
+        StableCo stableCo;
+        StableEUR seur;
         uint256 startBlock;
     }
 
@@ -62,7 +66,26 @@ contract Deploy is GenesisSeed {
         vm.stopBroadcast();
         _seedBankClients(keys.bankBOperator, d.bankB, actors.bob1, actors.bob2);
 
-        // TODO(Phase 4): deploy StableCo + StableEUR; register StableCo as Bank A client.
+        // Public-demo onboarding (Option B): the relayer's own EOA gets the narrow
+        // FAUCET_ROLE on both banks so it can onboard visitors (register + capped credit).
+        _grantFaucet(keys.bankAOperator, d.bankA, actors.relayer);
+        _grantFaucet(keys.bankBOperator, d.bankB, actors.relayer);
+
+        // Stablecoin layer: the StableCo operator signs the vault deployment (which deploys
+        // sEUR atomically); the central bank operator wires StableCo into the engine; Bank A
+        // onboards StableCo as a client. StableCo starts at zero — the first mint is live.
+        vm.startBroadcast(keys.stableCoOperator);
+        d.stableCo = new StableCo(d.engine, d.bankA, actors.stableCoOperator);
+        d.seur = d.stableCo.seur();
+        vm.stopBroadcast();
+
+        vm.startBroadcast(keys.deployer);
+        d.engine.setStableCo(address(d.stableCo));
+        vm.stopBroadcast();
+
+        vm.startBroadcast(keys.bankAOperator);
+        if (!d.bankA.isClient(address(d.stableCo))) d.bankA.registerClient(address(d.stableCo));
+        vm.stopBroadcast();
 
         console2.log("CentralBank:     ", address(d.centralBank));
         console2.log("wCBDC:           ", address(d.wcbdc));
@@ -71,6 +94,8 @@ contract Deploy is GenesisSeed {
         console2.log("Bank B:          ", address(d.bankB));
         console2.log("DEP-B:           ", address(d.bankB.depositToken()));
         console2.log("SettlementEngine:", address(d.engine));
+        console2.log("StableCo:        ", address(d.stableCo));
+        console2.log("sEUR:            ", address(d.seur));
         console2.log("Relayer:         ", actors.relayer);
         console2.log("START_BLOCK:     ", d.startBlock);
 
@@ -89,6 +114,8 @@ contract Deploy is GenesisSeed {
         vm.serializeAddress(obj, "bankB", address(d.bankB));
         vm.serializeAddress(obj, "depB", address(d.bankB.depositToken()));
         vm.serializeAddress(obj, "settlementEngine", address(d.engine));
+        vm.serializeAddress(obj, "stableCo", address(d.stableCo));
+        vm.serializeAddress(obj, "seur", address(d.seur));
         vm.serializeAddress(obj, "centralBankOperator", actors.centralBankOperator);
         vm.serializeAddress(obj, "bankAOperator", actors.bankAOperator);
         vm.serializeAddress(obj, "bankBOperator", actors.bankBOperator);

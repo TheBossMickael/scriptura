@@ -17,10 +17,18 @@ contract Seed is GenesisSeed {
         string memory json = vm.readFile(_deploymentsPath());
         CommercialBank bankA = CommercialBank(vm.parseJsonAddress(json, ".bankA"));
         CommercialBank bankB = CommercialBank(vm.parseJsonAddress(json, ".bankB"));
+        address stableCo = vm.parseJsonAddress(json, ".stableCo");
 
         _fundActors(keys.deployer, actors);
         _seedBankClients(keys.bankAOperator, bankA, actors.alice1, actors.alice2);
         _seedBankClients(keys.bankBOperator, bankB, actors.bob1, actors.bob2);
+        _grantFaucet(keys.bankAOperator, bankA, actors.relayer);
+        _grantFaucet(keys.bankBOperator, bankB, actors.relayer);
+
+        // StableCo is a client of Bank A (deposit reserves live there) — idempotent.
+        vm.startBroadcast(keys.bankAOperator);
+        if (!bankA.isClient(stableCo)) bankA.registerClient(stableCo);
+        vm.stopBroadcast();
 
         console2.log("Seed completed against:", _deploymentsPath());
     }

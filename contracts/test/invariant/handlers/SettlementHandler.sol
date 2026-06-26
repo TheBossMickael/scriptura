@@ -6,6 +6,8 @@ import {StdCheats} from "forge-std/StdCheats.sol";
 import {StdUtils} from "forge-std/StdUtils.sol";
 import {CommercialBank} from "../../../src/CommercialBank.sol";
 import {SettlementEngine} from "../../../src/SettlementEngine.sol";
+import {StableCo} from "../../../src/StableCo.sol";
+import {StableEUR} from "../../../src/StableEUR.sol";
 import {WCBDC} from "../../../src/WCBDC.sol";
 
 /// @notice Invariant-fuzzing handler: drives the system through bounded, never-reverting
@@ -26,6 +28,8 @@ contract SettlementHandler is CommonBase, StdCheats, StdUtils {
 
     SettlementEngine internal immutable engine;
     WCBDC internal immutable wcbdc;
+    StableCo internal immutable stableCo;
+    StableEUR internal immutable seur;
 
     CommercialBank[2] internal banks;
     address[2] internal operators;
@@ -36,10 +40,13 @@ contract SettlementHandler is CommonBase, StdCheats, StdUtils {
         SettlementEngine engine_,
         CommercialBank[2] memory banks_,
         address[2] memory operators_,
-        ClientAccount[2][2] memory clients_
+        ClientAccount[2][2] memory clients_,
+        StableCo stableCo_
     ) {
         engine = engine_;
         wcbdc = engine_.wcbdc();
+        stableCo = stableCo_;
+        seur = stableCo_.seur();
         banks = banks_;
         operators = operators_;
         // Element-wise: solc 0.8.24 (legacy codegen) cannot copy a struct array
@@ -83,6 +90,66 @@ contract SettlementHandler is CommonBase, StdCheats, StdUtils {
         if (amount == 0) return;
 
         _executeSignedIntent(from, address(fromBank), address(toBank), to.addr, amount);
+    }
+
+    /// @notice A random client mints sEUR: same-bank (client of A — intrabank book transfer
+    ///         into the vault) or cross-bank (client of B — composed interbank settlement).
+    ///         Bounded so it never reverts: every mint moves DEP-A into the vault, so it is
+    ///         skipped while Bank A (or the minter's bank) is frozen; cross-bank is also
+    ///         capped by the paying bank's reserves.
+    function mintStable(uint256 bankSeed, uint256 clientSeed, uint256 amount) external {
+        if (banks[0].depositToken().paused()) return; // every mint touches the vault's DEP-A
+        uint256 b = bankSeed % 2;
+        CommercialBank bank = banks[b];
+        if (bank.depositToken().paused()) return;
+
+        ClientAccount memory client = clients[b][clientSeed % 2];
+        uint256 cap = bank.depositToken().balanceOf(client.addr);
+        if (b == 1) {
+            uint256 reserves = wcbdc.balanceOf(address(bank)); // cross-bank: B settles to A
+            if (reserves < cap) cap = reserves;
+        }
+        amount = bound(amount, 0, cap);
+        if (amount == 0) return;
+
+        StableCo.MintIntent memory intent = StableCo.MintIntent({
+            minter: client.addr,
+            minterBank: address(bank),
+            amount: amount,
+            nonce: stableCo.nonces(client.addr),
+            deadline: block.timestamp + 1 hours
+        });
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(client.key, stableCo.hashMintIntent(intent));
+        stableCo.mintFromIntent(intent, abi.encodePacked(r, s, v));
+    }
+
+    /// @notice A random client redeems sEUR back into deposits (same/cross-bank). Capped by
+    ///         the client's sEUR balance and — cross-bank — by Bank A's reserves (it settles
+    ///         the reverse leg A->B). Coverage guarantees the vault always holds enough DEP-A.
+    function redeemStable(uint256 bankSeed, uint256 clientSeed, uint256 amount) external {
+        if (banks[0].depositToken().paused()) return; // every redeem burns the vault's DEP-A
+        uint256 b = bankSeed % 2;
+        CommercialBank bank = banks[b];
+        if (bank.depositToken().paused()) return;
+
+        ClientAccount memory client = clients[b][clientSeed % 2];
+        uint256 cap = seur.balanceOf(client.addr);
+        if (b == 1) {
+            uint256 reserves = wcbdc.balanceOf(address(banks[0])); // cross-bank: A settles to B
+            if (reserves < cap) cap = reserves;
+        }
+        amount = bound(amount, 0, cap);
+        if (amount == 0) return;
+
+        StableCo.RedeemIntent memory intent = StableCo.RedeemIntent({
+            redeemer: client.addr,
+            redeemerBank: address(bank),
+            amount: amount,
+            nonce: stableCo.nonces(client.addr),
+            deadline: block.timestamp + 1 hours
+        });
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(client.key, stableCo.hashRedeemIntent(intent));
+        stableCo.redeemFromIntent(intent, abi.encodePacked(r, s, v));
     }
 
     /// @notice Operator freezes/unfreezes a random bank — settlements must keep

@@ -182,7 +182,11 @@ on-chain, et rend la vue. **Le masquage front = UX ; la sécurité = `onlyRole` 
 - **Opérateur banque** : bilan live en deux colonnes (actif : wCBDC, créances ; passif : supply DEP, dettes) + jauge du ratio ; gestion clients (liste / ajouter / retirer) ; freeze/unfreeze ; flux entrants/sortants ; V2 : marché interbancaire, guichet de refinancement.
 - **Opérateur StableCo** : preuve de réserves (réserves DEP-A vs supply sEUR, ratio de couverture), volumes mint/redeem, détenteurs. Peu d'actions et **aucun pouvoir de mint** (cf. 5.3) — un émetteur sain est ennuyeux.
 - **Banque centrale** : dashboard macro (M0, M1 par banque, agrégats, flux interbancaires) ; allowlist ; paramètre du ratio (macroprudentiel en un slider) ; mur d'alertes `ReserveRatioBreached` ; V2 : console refinancement/LOLR, taux.
-- **Observateur (wallet inconnu / non connecté)** : toutes les métriques publiques — démo de la transparence radicale.
+- **Observateur (wallet non connecté ou en lecture seule)** : toutes les métriques publiques — démo de la transparence radicale.
+
+**Onboarding public — Option B (décidé 2026-06-26).** Un wallet MetaMask connecté mais **inconnu** ne se contente pas d'observer : il peut **s'enrôler**. Un bouton « rejoindre / obtenir des euros de test » fait signer à l'opérateur de banque `registerClient` + `creditClient` sur l'adresse du visiteur (action institutionnelle, tx directe — règle de routage §5.2) → le visiteur devient client de la Banque A et peut alors mint/payer/redeem **avec son propre wallet** (gasless via le relayer). Un lien externe pointe vers un faucet sETH Sepolia, nécessaire au seul chemin P2P sEUR **direct** (les chemins gasless n'exigent aucun sETH). Sous-décision à trancher en Phase 5 : où vit la clé opérateur du faucet — un service faucet dédié et limité (rate-limit / plafond de DEP créditée), jamais fusionnée avec la clé gas-only du relayer.
+
+**UX bloquante (décidé 2026-06-26).** Tant qu'une action est en attente, l'interface entière est **verrouillée** (pas de changement de vue, pas de nouvelle action), bouton en chargement, jusqu'à la confirmation on-chain — généralise la limite « pas de rafales » du nonce séquentiel et garantit que chaque action est bien actée avant la suivante.
 
 ---
 

@@ -26,7 +26,7 @@ Everything not locked is yours to decide; prefer simple over clever.
 ## Tech stack (LOCKED)
 
 - **Contracts**: Solidity ^0.8.24, Foundry, OpenZeppelin v5 (AccessControl, Pausable, EIP712, Nonces, ECDSA). No upgradeability proxies — we redeploy instead.
-- **Relayer/backend**: Node.js + TypeScript + viem. Single business endpoint `POST /intent`. **No database** — chain is the source of truth; backend must be stateless and rebuildable from chain reads at boot.
+- **Relayer/backend**: Node.js + TypeScript + viem. Business endpoint `POST /intent` (signed monetary flows: payment / mint / redeem / transfer3009) + `POST /faucet` (Option B onboarding, no signature). **No database** — chain is the source of truth; backend must be stateless and rebuildable from chain reads at boot.
 - **Frontend**: React + wagmi/viem. Role-based views resolved from connected address via `directory.ts` (generated at deploy) + on-chain roles.
 - **Chains**: Anvil for daily dev, Sepolia for the live demo. All deploy/seed via `forge script`, addresses written to `deployments/<chain>.json` (committed).
 - **Orchestration**: Docker Compose (relayer + front) + Makefile: `anvil`, `deploy-local`, `deploy-sepolia`, `seed`, `up`, `down`, `fund-check`, `test`.
@@ -70,7 +70,7 @@ A phase is not done if any invariant test fails.
 ### Contracts (7 source files, 9 deployed instances)
 1. `WCBDC.sol` — restricted ERC-20: transfers only between allowlisted holders; mint/burn only by CentralBank; `SETTLER_ROLE` lets the engine move balances between banks.
 2. `CentralBank.sol` — owns wCBDC admin, bank allowlist, regulatory ratio parameter (`10%`).
-3. `CommercialBank.sol` (×2: A, B) — holds the bank's wCBDC reserves (reserves == `wCBDC.balanceOf(address(this))`), client registry `isClient(address)`, `freeze()/unfreeze()` (pauses its DepositToken), owns its DepositToken.
+3. `CommercialBank.sol` (×2: A, B) — holds the bank's wCBDC reserves (reserves == `wCBDC.balanceOf(address(this))`), client registry `isClient(address)`, `freeze()/unfreeze()` (pauses its DepositToken), owns its DepositToken. Phase 4.5: `onboard()` gated by a narrow `FAUCET_ROLE` (Option B public onboarding — register + capped credit, held by the relayer).
 4. `DepositToken.sol` (×2: DEP-A, DEP-B) — dumb ERC-20 + `_update` hook: a transfer is valid only if (`from` AND `to` are registered clients of the owning bank) OR caller is the SettlementEngine (mint/burn paths). Pausable via its bank.
 5. `SettlementEngine.sol` — verifies EIP-712 `PaymentIntent{from, fromBank, toBank, to, amount, nonce, deadline}` (ECDSA sig, **sequential per-user nonce**, deadline, both parties registered, sufficient wCBDC for interbank); executes settlement atomically; if `fromBank == toBank` → simple DEP transfer (no wCBDC).
 6. `StableCo.sol` — reserve vault. Mint/redeem sEUR 1:1 against DEP. **No admin mint exists** (see traps). Composes with the engine for cross-bank cases. Operator can only `pause()`.
@@ -119,11 +119,18 @@ The frontend and all metrics are built purely from events + view calls. No event
 Each phase's Definition of Done: code + tests green (`make test`) + invariant suite green +
 short note appended to `docs/architecture.md` describing what was built and any free choices made.
 
+**Status (2026-06-26)**: Phases 1–4 complete **plus Phase 4.5** (Option B faucet onboarding) —
+all green (**155 `forge test`, 25 relayer `vitest`**, 6 invariants at 0 revert). Per-phase notes
+in `docs/architecture.md`. **Next: Phase 5 — Frontend**, starting with the Option B "Join" button
+(→ `POST /faucet`). Nothing committed yet — the working tree carries the Phase 4 + 4.5 changes.
+
 - **Phase 1 — M0**: `WCBDC`, `CentralBank`, allowlist, genesis script skeleton. Unit tests incl. transfer restrictions.
 - **Phase 2 — M1 + settlement**: `CommercialBank` ×2, `DepositToken` ×2 (registry + `_update` hook + Pausable), `SettlementEngine` with direct (non-intent) settle path first. Integration tests: intrabank, interbank, illiquidity revert, ratio-breach event, freeze. Invariant suite bootstrapped here.
 - **Phase 3 — Intents + relayer**: EIP-712 `PaymentIntent` verification in engine; relayer service (`POST /intent`, sig pre-check, idempotency cache, boot resync, fund-check); Makefile + Docker Compose + Anvil/Sepolia profiles; full genesis seed.
 - **Phase 4 — Stablecoin**: `StableCo`, `StableEUR` + EIP-3009; same-bank and **cross-bank** mint/redeem (trap #1); both P2P transfer paths. Coverage invariant (#3) added to suite.
 - **Phase 5 — Frontend**: role-resolved views (client / bank operator / StableCo / central bank / observer) per `docs/projet.md` §7; event-driven metrics; payment form with EIP-712 signing and status tracking; balance-sheet view with ratio gauge and health states.
+  - **Public onboarding — Option B (LOCKED 2026-06-26)**: a connected MetaMask wallet with an *unknown* address can self-onboard so it can act, not just observe. A faucet action has the bank operator `registerClient` + `creditClient` it some test DEP (operator-only, direct tx — the routing rule). Then the visitor mints/pays/redeems with its own signature (gasless via the relayer). Link out to an external Sepolia sETH faucet for the *direct* sEUR `transfer()` path only. Open sub-decision to settle first: where the faucet's operator key lives — a dedicated, rate-limited faucet service, **never** folded into the gas-only relayer key.
+  - **Blocking UX (LOCKED 2026-06-26)**: while any action is pending, the whole UI is locked (no view change, no new action) with a spinner until on-chain confirmation — generalizes the sequential-nonce no-burst rule. sEUR P2P keeps its two buttons: gasless (relayer) and direct (holder pays gas).
 - **Phase 6 — Docs & polish**: French docs (`monetary-design.md`, `architecture.md` final pass, `scenarios.md`, `threat-model.md`), README quickstart, `forge verify-contract` on Sepolia.
 
 V2+ (scenario agents, interbank market, refinancing/LOLR, SIWE-protected scenario endpoints,

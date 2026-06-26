@@ -37,6 +37,14 @@ contract CommercialBankTest is Test {
         vm.stopPrank();
     }
 
+    /// @dev Grants FAUCET_ROLE to `faucet`. Reads the role BEFORE pranking — vm.prank binds
+    ///      to the next external call, which would otherwise be the FAUCET_ROLE() view.
+    function _grantFaucet(address faucet) internal {
+        bytes32 faucetRole = bank.FAUCET_ROLE();
+        vm.prank(operator);
+        bank.grantRole(faucetRole, faucet);
+    }
+
     /// @dev Counts ReserveRatioBreached entries among recorded logs.
     function _breachLogCount() internal returns (uint256 count) {
         Vm.Log[] memory logs = vm.getRecordedLogs();
@@ -188,6 +196,62 @@ contract CommercialBankTest is Test {
         vm.prank(operator);
         bank.creditClient(alice1, 900e6); // ratio 11.11% >= 10%
         assertEq(_breachLogCount(), 0);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                         FAUCET ONBOARDING (Option B)
+    //////////////////////////////////////////////////////////////*/
+
+    function test_Onboard_RegistersAndCreditsInOneCall() public {
+        _fundReserves(1_000e6);
+        address faucet = makeAddr("relayerFaucet");
+        _grantFaucet(faucet);
+
+        vm.expectEmit(true, false, false, false, address(bank));
+        emit CommercialBank.ClientRegistered(alice1);
+        vm.expectEmit(true, false, false, true, address(bank));
+        emit CommercialBank.ClientCredited(alice1, 100e6);
+        vm.prank(faucet);
+        bank.onboard(alice1, 100e6);
+
+        assertTrue(bank.isClient(alice1));
+        assertEq(dep.balanceOf(alice1), 100e6);
+    }
+
+    function test_RevertWhen_OnboardCallerLacksFaucetRole() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, bank.FAUCET_ROLE()
+            )
+        );
+        vm.prank(stranger);
+        bank.onboard(alice1, 100e6);
+    }
+
+    function test_RevertWhen_OnboardAboveCap() public {
+        address faucet = makeAddr("relayerFaucet");
+        _grantFaucet(faucet);
+
+        uint256 tooMuch = bank.MAX_FAUCET_CREDIT() + 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(CommercialBank.FaucetAmountTooHigh.selector, tooMuch, bank.MAX_FAUCET_CREDIT())
+        );
+        vm.prank(faucet);
+        bank.onboard(alice1, tooMuch);
+    }
+
+    function test_RevertWhen_OnboardAlreadyClient() public {
+        _fundReserves(1_000e6);
+        address faucet = makeAddr("relayerFaucet");
+        _grantFaucet(faucet);
+
+        vm.prank(faucet);
+        bank.onboard(alice1, 100e6);
+
+        // One-shot per address: the second onboard reverts, capping on-chain credit.
+        vm.expectRevert(abi.encodeWithSelector(CommercialBank.AlreadyClient.selector, alice1));
+        vm.prank(faucet);
+        bank.onboard(alice1, 100e6);
     }
 
     /*//////////////////////////////////////////////////////////////

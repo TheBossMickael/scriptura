@@ -9,6 +9,7 @@ import {CentralBank} from "../../src/CentralBank.sol";
 import {CommercialBank} from "../../src/CommercialBank.sol";
 import {DepositToken} from "../../src/DepositToken.sol";
 import {SettlementEngine} from "../../src/SettlementEngine.sol";
+import {StableCo} from "../../src/StableCo.sol";
 import {WCBDC} from "../../src/WCBDC.sol";
 
 contract SettlementEngineTest is Test {
@@ -23,6 +24,7 @@ contract SettlementEngineTest is Test {
     address internal cbOperator = makeAddr("centralBankOperator");
     address internal opA = makeAddr("bankAOperator");
     address internal opB = makeAddr("bankBOperator");
+    address internal scOperator = makeAddr("stableCoOperator");
     address internal relayer = makeAddr("relayer");
 
     // Clients sign intents, so they need real keys (not just addresses).
@@ -404,6 +406,46 @@ contract SettlementEngineTest is Test {
             abi.encodeWithSelector(SettlementEngine.InsufficientReserves.selector, address(bankA), 2_000e6, 1_000e6)
         );
         engine.executeIntent(intent, signature);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                          STABLECO COMPOSITION
+    //////////////////////////////////////////////////////////////*/
+
+    function test_SetStableCo_OnlyCentralBankOperator() public {
+        vm.expectRevert(SettlementEngine.NotCentralBankOperator.selector);
+        vm.prank(stranger);
+        engine.setStableCo(address(0xBEEF));
+    }
+
+    function test_SetStableCo_CachesBankAndIsResettable() public {
+        vm.prank(scOperator);
+        StableCo stableCo1 = new StableCo(engine, bankA, scOperator);
+        vm.prank(scOperator);
+        StableCo stableCo2 = new StableCo(engine, bankA, scOperator);
+
+        vm.expectEmit(true, true, false, false, address(engine));
+        emit SettlementEngine.StableCoUpdated(address(0), address(stableCo1));
+        vm.prank(cbOperator);
+        engine.setStableCo(address(stableCo1));
+        assertEq(engine.stableCo(), address(stableCo1));
+        assertEq(engine.stableCoBank(), address(bankA)); // cached from StableCo.bankA()
+
+        // Re-settable (mirrors setSettlementEngine): a redeployed vault can be re-pointed.
+        vm.prank(cbOperator);
+        engine.setStableCo(address(stableCo2));
+        assertEq(engine.stableCo(), address(stableCo2));
+    }
+
+    function test_RevertWhen_SettleToStable_CallerNotStableCo() public {
+        // stableCo is unset (address(0)); any caller is rejected.
+        vm.expectRevert(SettlementEngine.NotStableCo.selector);
+        engine.settleToStable(alice1, address(bankA), 1e6);
+    }
+
+    function test_RevertWhen_SettleFromStable_CallerNotStableCo() public {
+        vm.expectRevert(SettlementEngine.NotStableCo.selector);
+        engine.settleFromStable(alice1, address(bankA), 1e6);
     }
 
     /*//////////////////////////////////////////////////////////////

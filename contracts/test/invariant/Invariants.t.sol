@@ -6,6 +6,8 @@ import {CentralBank} from "../../src/CentralBank.sol";
 import {CommercialBank} from "../../src/CommercialBank.sol";
 import {DepositToken} from "../../src/DepositToken.sol";
 import {SettlementEngine} from "../../src/SettlementEngine.sol";
+import {StableCo} from "../../src/StableCo.sol";
+import {StableEUR} from "../../src/StableEUR.sol";
 import {WCBDC} from "../../src/WCBDC.sol";
 import {SettlementHandler} from "./handlers/SettlementHandler.sol";
 
@@ -28,12 +30,15 @@ contract InvariantsTest is Test {
     DepositToken internal depA;
     DepositToken internal depB;
     SettlementEngine internal engine;
+    StableCo internal stableCo;
+    StableEUR internal seur;
     WCBDC internal wcbdc;
     SettlementHandler internal handler;
 
     address internal cbOperator = makeAddr("centralBankOperator");
     address internal opA = makeAddr("bankAOperator");
     address internal opB = makeAddr("bankBOperator");
+    address internal scOperator = makeAddr("stableCoOperator");
 
     // Clients sign EIP-712 intents in the handler, so they carry real keys.
     address internal alice1;
@@ -83,6 +88,15 @@ contract InvariantsTest is Test {
         bankB.creditClient(bob2, DEP_CLIENT_2);
         vm.stopPrank();
 
+        // Stablecoin layer wired before the handler so its mint/redeem actions are live.
+        vm.prank(scOperator);
+        stableCo = new StableCo(engine, bankA, scOperator);
+        seur = stableCo.seur();
+        vm.prank(cbOperator);
+        engine.setStableCo(address(stableCo));
+        vm.prank(opA);
+        bankA.registerClient(address(stableCo));
+
         handler = new SettlementHandler(
             engine,
             [bankA, bankB],
@@ -93,7 +107,8 @@ contract InvariantsTest is Test {
                     SettlementHandler.ClientAccount(alice2, alice2Key)
                 ],
                 [SettlementHandler.ClientAccount(bob1, bob1Key), SettlementHandler.ClientAccount(bob2, bob2Key)]
-            ]
+            ],
+            stableCo
         );
         targetContract(address(handler));
     }
@@ -117,10 +132,21 @@ contract InvariantsTest is Test {
     }
 
     /// @notice INVARIANT 5: only registered clients hold a bank's deposits — the fixed
-    ///         client universe accounts for the entire supply of each token.
+    ///         client universe accounts for the entire supply of each token. StableCo is a
+    ///         registered client of Bank A, so it holds the DEP-A reserves backing sEUR.
     function invariant_OnlyClientsHoldDEP() public view {
-        assertEq(depA.balanceOf(alice1) + depA.balanceOf(alice2), depA.totalSupply());
+        assertEq(
+            depA.balanceOf(alice1) + depA.balanceOf(alice2) + depA.balanceOf(address(stableCo)), depA.totalSupply()
+        );
         assertEq(depB.balanceOf(bob1) + depB.balanceOf(bob2), depB.totalSupply());
+    }
+
+    /// @notice INVARIANT 3: sEUR is always 100% covered — its supply never exceeds the
+    ///         vault's DEP-A reserves. The coverage-safe ordering of mint (reserves in
+    ///         before issuance) and redeem (burn before reserves out) keeps this holding
+    ///         through every same-bank and cross-bank flow.
+    function invariant_StableCoverage() public view {
+        assertLe(seur.totalSupply(), depA.balanceOf(address(stableCo)));
     }
 
     /// @notice INVARIANT 2 (aggregate form): no M1 crosses banks without an equal M0

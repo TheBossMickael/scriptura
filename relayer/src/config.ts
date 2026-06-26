@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAddress, parseEther, type Address, type Hex } from "viem";
+import { getAddress, parseEther, parseUnits, type Address, type Hex } from "viem";
 import { z } from "zod";
 
 export type ChainName = "local" | "sepolia";
@@ -17,6 +17,8 @@ const deploymentsSchema = z.looseObject({
   chainId: z.number().int().positive(),
   startBlock: z.number().int().nonnegative(),
   settlementEngine: address,
+  stableCo: address,
+  seur: address,
   bankA: address,
   bankB: address,
   depA: address,
@@ -35,6 +37,8 @@ export interface Config {
   /** Alert threshold for the relayer's gas balance, in wei. */
   minRelayerBalance: bigint;
   fundCheckIntervalMs: number;
+  /** Test deposits credited per Option B faucet onboarding, in 6-decimals units. */
+  faucetAmount: bigint;
   deployments: Deployments;
 }
 
@@ -85,6 +89,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: Number(env.RELAYER_PORT ?? 3001),
     minRelayerBalance: parseEther(env.MIN_RELAYER_BALANCE ?? "0.02"),
     fundCheckIntervalMs: Number(env.FUND_CHECK_INTERVAL_MS ?? 60_000),
+    // Whole test euros per onboard (default 100k), capped on-chain by MAX_FAUCET_CREDIT.
+    faucetAmount: parseUnits(env.FAUCET_AMOUNT ?? "100000", 6),
     deployments,
   };
 }

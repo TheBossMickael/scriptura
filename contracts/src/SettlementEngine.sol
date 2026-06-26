@@ -8,6 +8,14 @@ import {CentralBank} from "./CentralBank.sol";
 import {CommercialBank} from "./CommercialBank.sol";
 import {WCBDC} from "./WCBDC.sol";
 
+/// @dev Minimal view of the StableCo vault. Declared here (instead of importing StableCo)
+///      to avoid a circular import: StableCo imports this engine. The engine reads
+///      StableCo's reserve bank once, at `setStableCo`. `bankA()` returns a CommercialBank
+///      on StableCo, decoded here as the address it ABI-encodes to.
+interface IStableIssuer {
+    function bankA() external view returns (address);
+}
+
 /// @title SettlementEngine — atomic interbank settlement in central bank money
 /// @notice The system's core: routes a client payment either as an intrabank book
 ///         transfer (same bank, no wCBDC) or as an interbank settlement — burn the
@@ -45,9 +53,19 @@ contract SettlementEngine is EIP712, Nonces {
     /// @notice The wCBDC token reserves are settled in.
     WCBDC public immutable wcbdc;
 
+    /// @notice The StableCo vault authorized to compose settlements (mint/redeem), or
+    ///         address(0) until wired. Set by the central bank operator (trust-anchor for a
+    ///         powerful privilege: moving any client's deposits via `settleTo/FromStable`).
+    address public stableCo;
+
+    /// @notice StableCo's reserve bank (Bank A), cached at `setStableCo` from
+    ///         `StableCo.bankA()` so the engine never trusts a caller-supplied bank.
+    address public stableCoBank;
+
     event Settled(address indexed from, address indexed fromBank, address indexed toBank, address to, uint256 amount);
     event IntrabankTransfer(address indexed bank, address indexed from, address indexed to, uint256 amount);
     event IntentExecuted(bytes32 indexed digest, address indexed from, uint256 nonce);
+    event StableCoUpdated(address indexed previousStableCo, address indexed newStableCo);
 
     error ZeroAmount();
     error NotRegisteredBank(address bank);
@@ -55,6 +73,8 @@ contract SettlementEngine is EIP712, Nonces {
     error InsufficientReserves(address bank, uint256 required, uint256 available);
     error IntentExpired(uint256 deadline);
     error InvalidIntentSigner(address recovered, address expected);
+    error NotStableCo();
+    error NotCentralBankOperator();
 
     /// @param centralBank_ The CentralBank contract (bank registry + wCBDC source).
     constructor(CentralBank centralBank_) EIP712("SettlementEngine", "1") {
@@ -109,9 +129,56 @@ contract SettlementEngine is EIP712, Nonces {
         );
     }
 
+    /*//////////////////////////////////////////////////////////////
+                          STABLECO COMPOSITION
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Wires (or rewires) the StableCo vault allowed to compose settlements.
+    ///         Re-settable like `CommercialBank.setSettlementEngine`: a redeployed StableCo
+    ///         can be re-pointed without redeploying the engine.
+    /// @dev Restricted to the central bank operator, read on-chain from the CentralBank's
+    ///      AccessControl — no separate role lives on the engine. Caches StableCo's reserve
+    ///      bank so `settleTo/FromStable` never trust a caller-supplied bank address.
+    /// @param stableCo_ The StableCo address (address(0) to unplug).
+    function setStableCo(address stableCo_) external {
+        if (!centralBank.hasRole(centralBank.OPERATOR_ROLE(), msg.sender)) revert NotCentralBankOperator();
+        address previous = stableCo;
+        stableCo = stableCo_;
+        stableCoBank = stableCo_ == address(0) ? address(0) : IStableIssuer(stableCo_).bankA();
+        emit StableCoUpdated(previous, stableCo_);
+    }
+
+    /// @notice Settles deposits INTO StableCo (the sEUR mint leg). The payee and its bank
+    ///         are forced to StableCo / Bank A; the caller (StableCo) supplies only the
+    ///         minter's bank, so the same call serves a same-bank book transfer (minter at
+    ///         Bank A) or a composed interbank settlement (minter at Bank B) via `_settle`.
+    /// @dev Restricted to the wired StableCo, which has already verified the minter's
+    ///      signed MintIntent. Consumes no engine nonce — replay protection lives in
+    ///      StableCo's sequential nonce.
+    /// @param from The minter whose deposits fund the reserves.
+    /// @param fromBank The minter's bank.
+    /// @param amount Amount in 6-decimals units.
+    function settleToStable(address from, address fromBank, uint256 amount) external {
+        if (msg.sender != stableCo) revert NotStableCo();
+        _settle(from, fromBank, stableCoBank, stableCo, amount);
+    }
+
+    /// @notice Settles deposits OUT OF StableCo (the sEUR redeem leg). The payer and its
+    ///         bank are forced to StableCo / Bank A; the caller supplies only the
+    ///         redeemer's bank (same-bank book transfer or composed interbank settlement).
+    /// @dev Restricted to the wired StableCo, which has already verified the redeemer's
+    ///      signed RedeemIntent and burned their sEUR first (coverage-safe ordering).
+    /// @param to The redeemer receiving the deposits.
+    /// @param toBank The redeemer's bank.
+    /// @param amount Amount in 6-decimals units.
+    function settleFromStable(address to, address toBank, uint256 amount) external {
+        if (msg.sender != stableCo) revert NotStableCo();
+        _settle(stableCo, stableCoBank, toBank, to, amount);
+    }
+
     /// @dev Settlement core, shared history: served the Phase 2 direct path, now reached
-    ///      only through `executeIntent`. Phase 4's StableCo (a contract, unable to
-    ///      ECDSA-sign) will get its own restricted entry point on top of this.
+    ///      through `executeIntent` (client payments) and `settleTo/FromStable` (StableCo
+    ///      composition — Phase 4's restricted entry points, a contract cannot ECDSA-sign).
     ///      Checks-effects-interactions: all external calls target trusted system
     ///      contracts validated against the CentralBank registry.
     function _settle(address from, address fromBank, address toBank, address to, uint256 amount) internal {

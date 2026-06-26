@@ -226,3 +226,136 @@ JSON enrichi) → relayer (`/health` vert, boot-check `RELAYER_PK` ↔ déploiem
 `send-intent` (intent alice1→bob1 signé, posté, miné, `nonces(alice1)==1`, réserves
 500 000→499 000 / 501 000, **idempotence OK**) ; rejets vérifiés : signature malformée 400,
 schéma 400, nonce périmé 409 ; `make seed` ré-exécuté = « No transactions to broadcast ».
+
+---
+
+## Phase 4 — Stablecoin : StableCo + StableEUR (sEUR), mint/redeem same+cross-bank (2026-06-26)
+
+### Construit
+
+- **`contracts/src/StableEUR.sol`** — stablecoin `sEUR` ERC-20 **permissionless** (6 décimales,
+  aucune allowlist : il circule toujours, même StableCo en pause) + **EIP-3009 standard
+  complet** (`transferWithAuthorization`, `receiveWithAuthorization`, `cancelAuthorization`,
+  `authorizationState`) à **nonces aléatoires 32 bytes** et fenêtre `validAfter`/`validBefore`
+  stricte. `MINTER/BURNER_ROLE` accordés au **seul StableCo** ; **aucun minter EOA** (piège #2,
+  supply endogène). Domaine `EIP712("Stable EUR","1")`.
+- **`contracts/src/StableCo.sol`** — vault : déploie son `sEUR` au constructeur (câblage
+  atomique, pattern CentralBank→WCBDC / CommercialBank→DepositToken → seul admin/minter/burner),
+  détient les réserves DEP-A, mint/redeem 1:1. `mintFromIntent`/`redeemFromIntent` vérifient un
+  intent EIP-712 signé par le client (deadline, signataire, **nonce séquentiel** OZ `Nonces`)
+  puis composent **atomiquement** règlement + mint/burn sEUR. **Aucun branchement same/cross** :
+  la banque du client est passée à l'engine qui route. **Ordre préservant la couverture**
+  (INVARIANT 3 à chaque étape) : mint = règlement *puis* `seur.mint` ; redeem = `seur.burn`
+  *puis* règlement. Opérateur = `pause()`/`unpause()` uniquement. Vues `reserves()`,
+  `coverageRatioBps()`.
+- **`contracts/src/SettlementEngine.sol`** (étendu) — deux entrées **restreintes à l'adresse
+  StableCo** par-dessus `_settle` inchangé : `settleToStable` (flux mint, `to` forcé à StableCo)
+  et `settleFromStable` (flux redeem, `from` forcé). `setStableCo` gardé par le rôle opérateur
+  de la **CentralBank lu on-chain** (pas de nouveau rôle sur l'engine), **re-settable** (miroir
+  de `setSettlementEngine`) ; il met en cache `stableCo` **et** `stableCoBank` (lu via
+  `StableCo.bankA()`) pour ne jamais faire confiance à un argument de banque. Ces entrées ne
+  consomment **aucun nonce engine** mais émettent `Settled`/`IntrabankTransfer` (events riches
+  conservés : le front voit le règlement ET le mint).
+- **Scripts** — `GenesisSeed` charge `STABLECO_OPERATOR_PK` (l'opérateur devient rôle signataire
+  serveur) ; `Deploy` déploie StableCo (broadcast par son opérateur, qui déploie sEUR), câble
+  `engine.setStableCo`, enregistre StableCo comme **client de la Banque A**, écrit `stableCo`/`seur`
+  dans `deployments/<chain>.json` (StableCo démarre à 0, premier mint en live) ; `Seed`
+  enregistre StableCo client de A de façon idempotente. `.env.example` : `STABLECO_OPERATOR_PK`
+  remplace `STABLECO_OPERATOR_ADDRESS`.
+- **Relayer** — union discriminée `POST /intent` étendue à `mint`, `redeem`, `transfer3009`
+  (le discriminateur `type` anticipé en Phase 3). Pipeline factorisé (`handleSequentialIntent`
+  pour payment/mint/redeem : signature locale → deadline → nonce séquentiel → simulate → envoi
+  sérialisé) ; `transfer3009` a son propre pré-check (fenêtre + `authorizationState`, pas de
+  nonce séquentiel). ABIs `stableCoAbi`/`seurAbi`, domaines/digests `stableCoDomain`/`seurDomain`,
+  `mintDigest`/`redeemDigest`/`authorizationDigest` ; `config` lit `stableCo`/`seur`. Smoke
+  `send-intent` étendu (mint same-bank + transfer3009 gasless).
+- **Tests** — `test/unit/StableEUR.t.sol` (13), `test/unit/StableCo.t.sol` (12),
+  `test/integration/Stablecoin.t.sol` (9 : mint/redeem same+cross-bank, illiquidité au redeem
+  cross-bank, couverture sur flux mixte, freeze de A bloquant mint/redeem pendant que sEUR
+  circule, les **deux chemins P2P**) ; `SettlementEngine.t.sol` étendu (+4 : `setStableCo`,
+  garde `NotStableCo`). Relayer `intent.test.ts` migré (le cas `transfer3009` n'est plus rejeté)
+  + couverture des 3 nouveaux types.
+- **Suite d'invariants** — handler enrichi de `mintStable`/`redeemStable` bornés (same+cross,
+  jamais de revert) ; **INVARIANT 3** ajouté (`invariant_StableCoverage` :
+  `seur.totalSupply() <= depA.balanceOf(stableCo)`). `invariant_OnlyClientsHoldDEP` corrigé pour
+  inclure le solde DEP-A de StableCo ; `invariant_SettlementCoupling` et
+  `invariant_M1AggregateConstant` tiennent **sans modif** (un mint cross-bank fait bouger
+  `depA.totalSupply()` et `bankA.reserves()` du même montant).
+
+### Choix consignés (décisions utilisateur du 2026-06-26)
+
+1. **EIP-3009 standard complet** (transfer + receive + cancel), plutôt que `transferWithAuthorization`
+   seul — fidélité au pattern USDC production. `receiveWithAuthorization` (exige `msg.sender == to`)
+   est implémenté pour la conformité mais **non routé par le relayer** (le chemin gasless utilise
+   `transferWithAuthorization`).
+2. **Nonce séquentiel dédié dans StableCo** pour les intents mint/redeem (namespace séparé de
+   l'engine, même famille). Ne viole pas le piège #3 : on n'unifie jamais le séquentiel-engine et
+   l'aléatoire-3009 — trois compteurs coexistent (engine, StableCo, sEUR).
+3. **Events P2P sEUR = `Transfer` standard seul** (+ `AuthorizationUsed` sur le chemin gasless),
+   aucun event custom — sEUR reste un ERC-20 propre (pattern USDC). Les mouvements composés
+   mint/redeem émettent en revanche des events riches (`StableMinted`/`StableRedeemed`).
+4. **`setStableCo` re-settable par la banque centrale** + l'engine mémorise `stableCo`/`stableCoBank` ;
+   l'engine reste **le seul settler** (StableCo ne reçoit aucun rôle direct sur les DEP/wCBDC),
+   conformément au choix #2 de la Phase 3 (« StableCo aura son propre point d'entrée restreint »).
+5. **`STABLECO_OPERATOR_PK`** : l'opérateur StableCo signe désormais (déploiement + `pause()`) et
+   devient un rôle signataire serveur, cohérent avec le modèle clés individuelles (Phase 3, piège
+   no-mnemonic).
+6. **Burn sEUR sans allowance au redeem** : StableCo brûle le sEUR du redeemer (la signature du
+   `RedeemIntent` est l'autorisation), sûr car `BURNER_ROLE` n'est détenu que par StableCo —
+   nécessaire pour rester gasless.
+
+### Vérification
+
+`forge build` propre, `forge test` **151/151 verts** (128 unitaires + 17 intégration + 6 invariants
+à 128 runs × 64, **0 revert**, dont le nouvel `invariant_StableCoverage`), `forge fmt --check`
+propre, relayer `typecheck` + `vitest` (21) verts. **Dry-run `Deploy`** (EVM simulée) : genèse
+complète + StableCo/sEUR déployés, StableCo enregistré client de A, `deployments/local.json`
+enrichi (`stableCo`/`seur`), supply sEUR à 0 — fichier committé restauré après la vérification.
+
+---
+
+## Phase 4.5 — Onboarding public via faucet (Option B) (2026-06-26)
+
+### Contexte
+
+Décision produit (2026-06-26) : la démo publique adopte l'**Option B** — un wallet MetaMask connecté
+mais inconnu peut **agir**, pas seulement observer (cf. `docs/projet.md §7`). Un visiteur qui ne voit
+que les réserves sans rien pouvoir faire est inutile. Backend construit ici ; le bouton « Rejoindre »
+du front reste pour la Phase 5.
+
+### Construit
+
+- **`contracts/src/CommercialBank.sol`** (étendu) — `FAUCET_ROLE` (moindre privilège) + `onboard(client,
+  amount)` : enregistre le visiteur **et** le crédite en une fois, plafonné par `MAX_FAUCET_CREDIT`
+  (1 000 000e6) et **one-shot par adresse** (revert `AlreadyClient` au 2ᵉ appel → crédit on-chain borné
+  par adresse). Réutilise les events de genèse (`ClientRegistered`/`ClientCredited`) et le check de ratio
+  soft (l'onboarding fait grossir M1 — réaliste). Le rôle ne peut **que** enregistrer+créditer : jamais
+  geler ni recâbler.
+- **Scripts** — `_grantFaucet(operator, bank, relayer)` (idempotent) dans `GenesisSeed` ; `Deploy` et
+  `Seed` accordent `FAUCET_ROLE` à **l'EOA du relayer** sur les deux banques. Le relayer garde donc sa
+  **seule clé** (pas de clé opérateur injectée), avec un pouvoir étroit.
+- **Relayer** — `POST /faucet {address, bank:"A"|"B"}` (sans signature client : le `FAUCET_ROLE` est
+  l'autorité, le montant est plafonné on-chain) ; simulate (décode `AlreadyClient` → 409, banque gelée /
+  rôle manquant → 400) puis envoi **par la même file de nonce** que `/intent`. `commercialBankAbi`,
+  `faucetRequestSchema`, `FAUCET_AMOUNT` (env, défaut 100k euros de test), `faucetAmount` exposé dans
+  `/health`. Smoke inchangé.
+- **Tests** — `CommercialBank.t.sol` +4 (`onboard` : register+credit, plafond `FaucetAmountTooHigh`,
+  one-shot `AlreadyClient`, garde de rôle) ; relayer +4 (`faucetRequestSchema`). Invariants intacts
+  (`onboard` hors handler, comme `creditClient`).
+
+### Choix consignés (décision utilisateur 2026-06-26)
+
+1. **Le relayer porte l'onboarding** (pas de service séparé), via un `FAUCET_ROLE` **étroit** accordé à
+   sa propre EOA — il garde une clé unique. La frontière « relayer = gas-only » de la Phase 3 est
+   relâchée **délibérément mais au minimum** : compromission du relayer = création de dépôts de test
+   plafonnés, jamais un gel de banque.
+2. **One-shot par adresse + plafond on-chain** : garantie au niveau contrat (indépendante du rate-limit
+   off-chain, qui reste un durcissement futur — surface de spam = gas du relayer, déjà notée en Phase 3).
+3. Le visiteur n'a **pas besoin de sETH** pour rejoindre/mint/payer (gasless) ; le sETH n'est utile que
+   pour le P2P sEUR **direct** → lien externe vers un faucet Sepolia (front Phase 5).
+
+### Vérification
+
+`forge test` **155/155 verts** (132 unitaires + 17 intégration + 6 invariants, 0 revert), `forge fmt
+--check` propre, relayer `typecheck` + `vitest` (25) verts, **dry-run `Deploy`** OK (grant `FAUCET_ROLE`
+au relayer sur A et B), `deployments/local.json` committé restauré.

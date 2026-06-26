@@ -13,7 +13,16 @@ import {WCBDC} from "./WCBDC.sol";
 contract CommercialBank is AccessControl {
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
 
+    /// @notice Least-privilege role for the public-demo faucet (Option B): may ONLY onboard
+    ///         visitors (register + capped credit), never freeze or rewire. Granted by the
+    ///         bank operator to the relayer's own EOA, so the relayer keeps a single key.
+    bytes32 public constant FAUCET_ROLE = keccak256("FAUCET_ROLE");
+
     uint256 public constant BPS_DENOMINATOR = 10_000;
+
+    /// @notice Per-onboard ceiling on faucet-credited test deposits — an on-chain cap so a
+    ///         FAUCET_ROLE holder can never mint unbounded M1.
+    uint256 public constant MAX_FAUCET_CREDIT = 1_000_000e6;
 
     /// @notice The central bank, read for the regulatory reserve ratio threshold.
     CentralBank public immutable centralBank;
@@ -41,6 +50,7 @@ contract CommercialBank is AccessControl {
     error AlreadyClient(address account);
     error NotClient(address account);
     error ClientHasBalance(address client, uint256 balance);
+    error FaucetAmountTooHigh(uint256 amount, uint256 max);
 
     /// @param operator The bank operator EOA.
     /// @param centralBank_ The CentralBank contract (source of wCBDC and ratio threshold).
@@ -90,6 +100,25 @@ contract CommercialBank is AccessControl {
     /// @param client The receiving client (must be registered; enforced by the token hook).
     /// @param amount Amount in 6-decimals units.
     function creditClient(address client, uint256 amount) external onlyRole(OPERATOR_ROLE) {
+        depositToken.mint(client, amount);
+        emit ClientCredited(client, amount);
+        checkReserveRatio();
+    }
+
+    /// @notice Public-demo onboarding (Option B): registers a visitor and credits capped
+    ///         test deposits in one call. Held by the relayer (FAUCET_ROLE) — a least-
+    ///         privilege power that cannot freeze, rewire, or exceed MAX_FAUCET_CREDIT.
+    /// @dev One-shot per address (reverts if already a client), so the on-chain credit per
+    ///      visitor is capped at MAX_FAUCET_CREDIT regardless of off-chain rate limiting.
+    ///      Reuses the genesis events (ClientRegistered, ClientCredited) and the soft ratio
+    ///      check — onboarding grows M1 and degrades the ratio, which is realistic.
+    /// @param client The visitor's wallet to onboard.
+    /// @param amount Test deposits to credit (must be <= MAX_FAUCET_CREDIT).
+    function onboard(address client, uint256 amount) external onlyRole(FAUCET_ROLE) {
+        if (amount > MAX_FAUCET_CREDIT) revert FaucetAmountTooHigh(amount, MAX_FAUCET_CREDIT);
+        if (isClient[client]) revert AlreadyClient(client);
+        isClient[client] = true;
+        emit ClientRegistered(client);
         depositToken.mint(client, amount);
         emit ClientCredited(client, amount);
         checkReserveRatio();
