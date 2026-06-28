@@ -359,3 +359,87 @@ du front reste pour la Phase 5.
 `forge test` **155/155 verts** (132 unitaires + 17 intégration + 6 invariants, 0 revert), `forge fmt
 --check` propre, relayer `typecheck` + `vitest` (25) verts, **dry-run `Deploy`** OK (grant `FAUCET_ROLE`
 au relayer sur A et B), `deployments/local.json` committé restauré.
+
+---
+
+## Phase 5 — Frontend (5 vues par rôle) + indexeur Ponder (2026-06-27)
+
+### Construit
+
+- **`indexer/`** — indexeur **Ponder 0.16.6** (TypeScript). `ponder.config.ts` lit
+  `deployments/<chain>.json` (adresses + `START_BLOCK`, piège #6) et déclare 5 contrats
+  (SettlementEngine, BankA, BankB, StableCo, SEUR) ; `ponder.schema.ts` (8 tables dérivées :
+  `payment`, `stableFlow`, `ratioBreach`, `bankStatusEvent`, `clientEvent`, `client`,
+  `seurTransfer`, `seurHolder`, uint256 via le type `bigint` de Ponder) ; `src/index.ts`
+  (17 fonctions d'indexation, A/B partagent des helpers typés via `Context["db"]`) ;
+  **`src/api/index.ts`** — API REST custom (Hono + CORS) renvoyant un JSON prédictible au
+  front (`/payments`, `/stable-flows`, `/ratio-breaches`, `/bank-status`, `/clients`,
+  `/seur-transfers`, `/seur-holders`), bigints sérialisés en chaînes décimales.
+- **`frontend/`** — app **Vite + React + TypeScript + wagmi v2 + viem**. Couche `lib`
+  (ABIs propres au projet, `directory` typé depuis `local.json` + constantes de rôles +
+  annuaire, `eip712`/`intents` miroir du relayer, client `relayer`, client `ponder`,
+  `metrics` santé/couverture, `roles` résolution pure, `format`). Hooks (`useReads`
+  snapshot système + soldes, `useRole`, `usePonder`, `useActions`). **UX bloquante**
+  (`PendingProvider` + overlay plein écran : signé → soumis → confirmé, invalidation des
+  lectures au succès). **5 vues par rôle** (Observateur, Client, Opérateur banque, StableCo,
+  Banque centrale) résolues via `hasRole`/`isClient` on-chain. Formulaires : paiement
+  (décomposition pédagogique intra/inter, EIP-712, relais gasless), mint/redeem sEUR, **P2P
+  sEUR à deux boutons** (gasless EIP-3009 / direct + rappel sETH et lien faucet), **modale
+  « Rejoindre » Option B** (`POST /faucet`, bascule observateur→client). 4 suites `vitest`
+  (roles, metrics, format, intents, **25 tests**).
+- **Infra** — Makefile (`indexer-dev`, `front-dev`, `front-build`) ; `docker-compose.yml`
+  étendu (services `ponder` + `front` aux côtés de `relayer`) + `indexer/Dockerfile`,
+  `frontend/Dockerfile` (build au contexte racine pour atteindre `deployments/`) + `nginx.conf` ;
+  `.env.example` (VITE_*, PONDER_RPC_URL) ; `.gitignore` (`.ponder/`).
+
+### Choix consignés (décisions utilisateur du 2026-06-26/27)
+
+1. **Stack** : Vite + React + wagmi v2/viem (verrouillé) ; **adresses lues directement de
+   `deployments/<chain>.json`** (wrapper typé, aucun changement au script de deploy).
+2. **ABIs par projet** (et non un dossier partagé) : aligné sur la convention déjà posée par
+   `relayer/src/abi.ts`. Une tentative de dossier `abis/` partagé a été abandonnée — un module
+   partagé entre projets npm séparés casse la résolution de `viem` (remontée d'arborescence) ;
+   chaque projet (`relayer`, `indexer`, `frontend`) écrit ses ABIs minimales. Contrats gelés →
+   risque de divergence nul.
+3. **Indexeur Ponder intégré dès la Phase 5** : DB *dérivée* (reconstructible des logs, ne viole
+   pas « pas de DB »). **API REST custom plutôt que la GraphQL auto-générée** → forme JSON
+   maîtrisée, découplée du schéma GraphQL.
+4. **Métriques** : agrégats/historique via l'API Ponder ; soldes/nonces *live* via view calls
+   viem ; **liveness** par polling léger (4–5 s) + invalidation de toutes les lectures après
+   chaque action confirmée. Nonces séquentiels lus **frais** au clic (pas en cache).
+5. **UX bloquante** = overlay plein écran (signé/soumis/confirmé) ; généralise la règle
+   « pas de rafales » du nonce séquentiel (limite connue Phase 3).
+6. **Onboarding Option B = `POST /faucet`** (relayer + `FAUCET_ROLE`), conforme au backend
+   construit en Phase 4.5. (À noter : `docs/projet.md §7` décrit encore l'ancienne variante
+   « opérateur signe register+credit » — à rafraîchir en Phase 6 ; aucune déviation de décision
+   LOCKED côté code.)
+7. **Cibles** : dev hôte d'abord (Anvil), Sepolia en Phase 6. `local.json` committé est périmé
+   (sans `stableCo`/`seur`, hérité de Phase 4) → le front affiche un écran « Déploiement
+   incomplet » tant qu'un `make deploy-local` n'a pas régénéré un fichier complet.
+
+### Vérification
+
+`frontend` : **`tsc --noEmit` propre + `vitest` 25/25 verts**. `indexer` : **`ponder codegen` +
+`tsc --noEmit` propres**. Contrats et relayer non modifiés (155 `forge test` / 25 relayer
+`vitest` inchangés). **E2E hôte** (runbook) : `make anvil` → `make deploy-local` (régénère un
+`local.json` complet) → `make relayer-dev` + `make indexer-dev` + `make front-dev`, MetaMask sur
+localhost:8545 — à dérouler pour valider les 5 vues, l'Option B et les deux chemins P2P. Les
+services Docker (`make up`) sont fournis mais restent à valider (étape « finalisation Docker »).
+
+### Affinements UX (2026-06-28)
+
+- **Détection des reverts** : `confirm()` vérifie `receipt.status` (une tx minée-mais-revertée
+  résout un reçu `reverted` sans lever) → plus de faux succès. Les actions directes sont
+  **pré-simulées** (`simulateContract`) avant envoi : raison du revert décodée en français
+  (ex. `ClientHasBalance`, `AlreadyClient`) et pas de pop-up wallet voué à l'échec. Timeout de
+  confirmation (120 s) → l'UI ne reste jamais bloquée.
+- **Feedback par section** (`TxStatus`) : indicateur de chargement pendant le minage, puis
+  hash + lien Etherscan (sur Sepolia) affiché **dès que connu**, persistant ~30 s ; réinitialisé
+  au changement de compte. Remplace l'overlay plein écran + le toast global (le verrou « pas de
+  nouvelle action » reste via les boutons désactivés `isBusy`).
+- **Rafraîchissement par events** (`useChainWatcher` + `useWatchContractEvent`) : invalidation
+  instantanée des lectures sur tout nouvel event ; le polling devient un filet de sécurité lent
+  (15 s) → moins de bruit RPC, mises à jour cross-acteurs immédiates.
+- **Thème clair** « sérieux », validations de montant (boutons désactivés + rappel de solde
+  neutre), skeletons de chargement, et clarification UI **DEP = euros de banque commerciale /
+  wCBDC = euros de banque centrale / sEUR = stablecoin**.

@@ -1,9 +1,12 @@
-# Two-Tier Money Sandbox — orchestration (Phase 3: relayer only; the `front`
-# service joins in Phase 5).
+# Two-Tier Money Sandbox — orchestration (Phase 5: relayer + Ponder indexer + frontend).
 #
 # Usage: make up [CHAIN=local|sepolia]  /  make down
 # CHAIN=local expects an Anvil node on the HOST (make anvil), reached from the
-# container via host.docker.internal.
+# containers via host.docker.internal.
+#
+# NOTE: the host dev loop (make anvil / deploy-local / relayer-dev / indexer-dev /
+# front-dev) is the validated path for Phase 5. These container builds are the
+# "finalize Docker" step — run `make up` to build/validate them.
 
 services:
   relayer:
@@ -28,4 +31,32 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    restart: unless-stopped
+
+  ponder:
+    build: ./indexer
+    env_file: .env
+    environment:
+      CHAIN_NAME: ${CHAIN_NAME:-local}
+      DEPLOYMENTS_DIR: /app/deployments
+      PONDER_RPC_URL: http://host.docker.internal:8545
+    volumes:
+      - ./deployments:/app/deployments:ro
+    ports:
+      - "42069:42069"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  front:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        # Browser-facing URLs: the SPA runs on the host, so it reaches the relayer and
+        # indexer through their host-published ports.
+        VITE_RELAYER_URL: ${VITE_RELAYER_URL:-http://localhost:3001}
+        VITE_PONDER_URL: ${VITE_PONDER_URL:-http://localhost:42069}
+    ports:
+      - "5173:80"
     restart: unless-stopped

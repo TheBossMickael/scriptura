@@ -8,3 +8,6 @@ relayer/dist/
 # unset in the spawning shell — never source, never commit.
 relayer/undefined/
 frontend/dist/
+# Ponder indexer runtime artifacts (derived DB + cache; rebuildable from chain).
+indexer/.ponder/
+indexer/generated/

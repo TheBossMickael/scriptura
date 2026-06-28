@@ -119,19 +119,25 @@ The frontend and all metrics are built purely from events + view calls. No event
 Each phase's Definition of Done: code + tests green (`make test`) + invariant suite green +
 short note appended to `docs/architecture.md` describing what was built and any free choices made.
 
-**Status (2026-06-26)**: Phases 1–4 complete **plus Phase 4.5** (Option B faucet onboarding) —
-all green (**155 `forge test`, 25 relayer `vitest`**, 6 invariants at 0 revert). Per-phase notes
-in `docs/architecture.md`. **Next: Phase 5 — Frontend**, starting with the Option B "Join" button
-(→ `POST /faucet`). Nothing committed yet — the working tree carries the Phase 4 + 4.5 changes.
+**Status (2026-06-27)**: Phases 1–4.5 complete (**155 `forge test`, 25 relayer `vitest`**, 6
+invariants at 0 revert). **Phase 5 (Frontend + Ponder indexer) BUILT**: `frontend/`
+(Vite + React + wagmi v2; 5 role views; Option B Join via `POST /faucet`; blocking-UX overlay;
+`tsc` clean + **25 `vitest`** green) and `indexer/` (Ponder 0.16: config + schema + indexing +
+custom REST API; `codegen` + `tsc` clean). Manual E2E on Anvil in progress. Free choices:
+per-project ABIs (no shared `abis/` folder — matches the relayer convention), Ponder **custom
+REST API** (not the auto GraphQL), addresses read directly from `deployments/<chain>.json`.
+**Public hosting DROPPED (2026-06-27)**: no Render/Vercel app hosting — the live demo runs
+**locally pointing at Sepolia**, backed by **Etherscan-verified contracts**. **Next: Phase 6** —
+docs + README + Sepolia deploy/verify. Nothing committed yet.
 
 - **Phase 1 — M0**: `WCBDC`, `CentralBank`, allowlist, genesis script skeleton. Unit tests incl. transfer restrictions.
 - **Phase 2 — M1 + settlement**: `CommercialBank` ×2, `DepositToken` ×2 (registry + `_update` hook + Pausable), `SettlementEngine` with direct (non-intent) settle path first. Integration tests: intrabank, interbank, illiquidity revert, ratio-breach event, freeze. Invariant suite bootstrapped here.
 - **Phase 3 — Intents + relayer**: EIP-712 `PaymentIntent` verification in engine; relayer service (`POST /intent`, sig pre-check, idempotency cache, boot resync, fund-check); Makefile + Docker Compose + Anvil/Sepolia profiles; full genesis seed.
 - **Phase 4 — Stablecoin**: `StableCo`, `StableEUR` + EIP-3009; same-bank and **cross-bank** mint/redeem (trap #1); both P2P transfer paths. Coverage invariant (#3) added to suite.
 - **Phase 5 — Frontend**: role-resolved views (client / bank operator / StableCo / central bank / observer) per `docs/projet.md` §7; event-driven metrics; payment form with EIP-712 signing and status tracking; balance-sheet view with ratio gauge and health states.
-  - **Public onboarding — Option B (LOCKED 2026-06-26)**: a connected MetaMask wallet with an *unknown* address can self-onboard so it can act, not just observe. A faucet action has the bank operator `registerClient` + `creditClient` it some test DEP (operator-only, direct tx — the routing rule). Then the visitor mints/pays/redeems with its own signature (gasless via the relayer). Link out to an external Sepolia sETH faucet for the *direct* sEUR `transfer()` path only. Open sub-decision to settle first: where the faucet's operator key lives — a dedicated, rate-limited faucet service, **never** folded into the gas-only relayer key.
+  - **Public onboarding — Option B (LOCKED 2026-06-26; built in Phase 4.5)**: a connected MetaMask wallet with an *unknown* address can self-onboard so it can act, not just observe. Implemented as `POST /faucet {address, bank}` → the **relayer** (holding a narrow `FAUCET_ROLE`) calls `CommercialBank.onboard()` which does `register + credit` of test DEP in one tx, capped on-chain and one-shot per address. The sub-decision on the faucet key was resolved in Phase 4.5: it lives in the **relayer EOA with a least-privilege `FAUCET_ROLE`** (can only register+credit, never freeze/rewire) — not a separate service. Then the visitor mints/pays/redeems with its own signature (gasless via the relayer). Link out to an external Sepolia sETH faucet for the *direct* sEUR `transfer()` path only.
   - **Blocking UX (LOCKED 2026-06-26)**: while any action is pending, the whole UI is locked (no view change, no new action) with a spinner until on-chain confirmation — generalizes the sequential-nonce no-burst rule. sEUR P2P keeps its two buttons: gasless (relayer) and direct (holder pays gas).
-- **Phase 6 — Docs & polish**: French docs (`monetary-design.md`, `architecture.md` final pass, `scenarios.md`, `threat-model.md`), README quickstart, `forge verify-contract` on Sepolia.
+- **Phase 6 — Docs & polish**: French docs (`monetary-design.md`, `architecture.md` final pass, `scenarios.md`, `threat-model.md`), README quickstart (+ demo GIF), `forge verify-contract` on Sepolia. **No public app hosting** (dropped 2026-06-27): the demo runs locally pointing at Sepolia, with Etherscan-verified contracts as the durable, zero-maintenance artifact. `make up` remains a one-command local bring-up.
 
 V2+ (scenario agents, interbank market, refinancing/LOLR, SIWE-protected scenario endpoints,
 AMM, multi-chain) is OUT OF SCOPE for now — do not scaffold for it beyond what's free.
