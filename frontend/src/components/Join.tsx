@@ -15,7 +15,7 @@ function JoinModal({ account, onClose }: { account: Address; onClose: () => void
   const [bank, setBank] = useState<BankKey>("A");
   const health = useQuery({ queryKey: ["health"], queryFn: getHealth, retry: false });
 
-  const amountLabel = health.data ? `${formatAmount(BigInt(health.data.faucetAmount))} DEP` : "des dépôts de test";
+  const amountLabel = health.data ? `${formatAmount(BigInt(health.data.faucetAmount))} DEP` : "test deposits";
 
   async function onConfirm() {
     const ok = await faucetOnboard(account, bank);
@@ -25,33 +25,33 @@ function JoinModal({ account, onClose }: { account: Address; onClose: () => void
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true">
       <div className="modal">
-        <h2>Rejoindre la démo</h2>
+        <h2>Join the demo</h2>
         <p className="muted">
-          Vous devenez client de la banque choisie et recevez {amountLabel}. Vous pourrez ensuite payer, mint/redeem du
-          sEUR — le tout <strong>sans gas</strong> (le relayer paie).
+          You become a client of the chosen bank and receive {amountLabel}. You can then pay and mint/redeem sEUR —
+          all <strong>gasless</strong> (the relayer pays).
         </p>
 
-        <Field label="Banque">
+        <Field label="Bank">
           <select value={bank} onChange={(e) => setBank(e.target.value as BankKey)} disabled={isBusy}>
-            <option value="A">Banque A</option>
-            <option value="B">Banque B</option>
+            <option value="A">Bank A</option>
+            <option value="B">Bank B</option>
           </select>
         </Field>
 
         <p className="note">
-          Pas besoin de sETH pour rejoindre ou payer. Le sETH n'est requis que pour le transfert sEUR <em>direct</em> —{" "}
+          No sETH needed to join or pay. sETH is only required for the <em>direct</em> sEUR transfer —{" "}
           <a href={SEPOLIA_ETH_FAUCET_URL} target="_blank" rel="noreferrer">
-            faucet Sepolia
+            Sepolia faucet
           </a>
           .
         </p>
 
         <div className="btn-row">
           <Button onClick={onConfirm} disabled={isBusy}>
-            Rejoindre la {bank === "A" ? "Banque A" : "Banque B"}
+            Join {bank === "A" ? "Bank A" : "Bank B"}
           </Button>
           <Button variant="ghost" onClick={onClose} disabled={isBusy}>
-            Annuler
+            Cancel
           </Button>
         </div>
         <TxStatus feedback={feedback} />
@@ -64,12 +64,10 @@ function JoinModal({ account, onClose }: { account: Address; onClose: () => void
 export function JoinCard({ account }: { account: Address }) {
   const [open, setOpen] = useState(false);
   return (
-    <Card title="Vous êtes connecté, mais pas encore client">
-      <p className="muted">
-        Rejoignez une banque pour agir (payer, mint/redeem du sEUR) au lieu de seulement observer.
-      </p>
+    <Card title="Connected, but not a client yet">
+      <p className="muted">Join a bank to act (pay, mint/redeem sEUR) instead of only observing.</p>
       <div className="btn-row">
-        <Button onClick={() => setOpen(true)}>Rejoindre / obtenir des euros de test</Button>
+        <Button onClick={() => setOpen(true)}>Join / get test euros</Button>
       </div>
       {open && <JoinModal account={account} onClose={() => setOpen(false)} />}
     </Card>

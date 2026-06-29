@@ -24,31 +24,32 @@ export interface ContractWrite {
 
 // Contract custom errors -> friendly French. Surfaced by pre-simulation before sending.
 const KNOWN_ERRORS: Record<string, string> = {
-  ClientHasBalance: "Le client a encore un solde DEP non nul — videz-le avant de le retirer.",
-  AlreadyClient: "Cette adresse est déjà cliente.",
-  NotBankClient: "Une des parties n'est pas cliente de sa banque.",
-  NotClient: "Adresse non cliente de cette banque.",
-  InsufficientReserves: "Réserves de la banque insuffisantes pour ce règlement interbancaire.",
-  EnforcedPause: "Opération suspendue (banque gelée ou émission en pause).",
-  ThresholdAboveMax: "Seuil au-dessus du maximum autorisé (100 %).",
-  FaucetAmountTooHigh: "Montant de faucet au-dessus du plafond.",
-  IntentExpired: "Intent expiré — relancez l'opération.",
-  InvalidIntentSigner: "Signature de l'intent invalide.",
+  ClientHasBalance: "The client still holds a non-zero DEP balance — empty it before removing.",
+  AlreadyClient: "This address is already a client.",
+  NotBankClient: "One of the parties is not a client of its bank.",
+  NotClient: "Address is not a client of this bank.",
+  InsufficientReserves: "Bank reserves are insufficient for this interbank settlement.",
+  EnforcedPause: "Operation suspended (bank frozen or issuance paused).",
+  ThresholdAboveMax: "Threshold above the allowed maximum (100%).",
+  FaucetAmountTooHigh: "Faucet amount above the cap.",
+  AccessControlUnauthorizedAccount: "You don't hold this role — connect the matching account to act.",
+  IntentExpired: "Intent expired — please retry.",
+  InvalidIntentSigner: "Invalid intent signature.",
 };
 
 function describeError(err: unknown): string {
   if (err instanceof RelayerError) return describeRelayerError(err);
   if (err instanceof Error) {
     const msg = err.message;
-    if (/reject|denied|cancell?ed/i.test(msg)) return "Action refusée dans le wallet.";
-    if (/timed out|timeout/i.test(msg)) return "Confirmation trop longue — la transaction est peut-être encore en attente.";
-    for (const [name, french] of Object.entries(KNOWN_ERRORS)) {
-      if (msg.includes(name)) return french;
+    if (/reject|denied|cancell?ed/i.test(msg)) return "Action rejected in the wallet.";
+    if (/timed out|timeout/i.test(msg)) return "Confirmation is taking too long — the transaction may still be pending.";
+    for (const [name, english] of Object.entries(KNOWN_ERRORS)) {
+      if (msg.includes(name)) return english;
     }
     const short = (err as { shortMessage?: string }).shortMessage;
-    return short ?? msg.split("\n")[0] ?? "Erreur inconnue";
+    return short ?? msg.split("\n")[0] ?? "Unknown error";
   }
-  return "Erreur inconnue";
+  return "Unknown error";
 }
 
 /**
@@ -81,7 +82,7 @@ export function useTx() {
     async (hash: Hex): Promise<void> => {
       if (!publicClient) return;
       const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
-      if (receipt.status !== "success") throw new Error("Transaction rejetée on-chain (revert).");
+      if (receipt.status !== "success") throw new Error("Transaction reverted on-chain.");
     },
     [publicClient],
   );
@@ -138,7 +139,7 @@ export function useTx() {
       }),
     /** Option B onboarding via the relayer faucet (no client signature). */
     faucetOnboard: (addr: Address, bank: BankKey) =>
-      execute("Rejoindre la banque", async (onHash) => {
+      execute("Join the bank", async (onHash) => {
         const { txHash } = await faucet(addr, bank);
         onHash(txHash);
         await confirm(txHash);

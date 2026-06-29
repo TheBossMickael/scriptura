@@ -4,6 +4,7 @@ import { Badge, Button, Card, Field, Stat } from "../components/ui";
 import { Amount, HealthBadge, Percent } from "../components/metrics";
 import { BreachesList, PaymentsList } from "../components/History";
 import { TxStatus } from "../components/TxStatus";
+import { ReadOnlyBanner } from "../components/Explore";
 import { useTx } from "../hooks/useActions";
 import { useSystemSnapshot } from "../hooks/useReads";
 import { usePayments, useRatioBreaches } from "../hooks/usePonder";
@@ -26,21 +27,21 @@ function AllowlistRow({
     abi: centralBankAbi,
     functionName: "isRegisteredBank",
     args: [bank.bank],
-    query: { refetchInterval: 5000 },
+    query: { refetchInterval: 15_000 },
   });
 
   return (
     <tr>
       <td>{bank.label}</td>
-      <td>{registered.data ? <Badge tone="good">Inscrite</Badge> : <Badge tone="bad">Retirée</Badge>}</td>
+      <td>{registered.data ? <Badge tone="good">Registered</Badge> : <Badge tone="bad">Removed</Badge>}</td>
       <td>
         {registered.data ? (
           <Button variant="ghost" disabled={disabled} onClick={() => onRemove(bank)}>
-            Retirer
+            Remove
           </Button>
         ) : (
           <Button disabled={disabled} onClick={() => onRegister(bank)}>
-            Inscrire
+            Register
           </Button>
         )}
       </td>
@@ -52,14 +53,14 @@ function AllowlistSection() {
   const { direct, feedback, isBusy } = useTx();
 
   const onRegister = (bank: BankInfo) =>
-    direct("Inscrire une banque", {
+    direct("Register a bank", {
       address: deployment.centralBank,
       abi: centralBankAbi,
       functionName: "registerBank",
       args: [bank.bank],
     });
   const onRemove = (bank: BankInfo) =>
-    direct("Retirer une banque", {
+    direct("Remove a bank", {
       address: deployment.centralBank,
       abi: centralBankAbi,
       functionName: "removeBank",
@@ -67,12 +68,12 @@ function AllowlistSection() {
     });
 
   return (
-    <Card title="Allowlist des banques">
+    <Card title="Bank allowlist">
       <table className="table">
         <thead>
           <tr>
-            <th>Banque</th>
-            <th>Statut</th>
+            <th>Bank</th>
+            <th>Status</th>
             <th />
           </tr>
         </thead>
@@ -94,9 +95,9 @@ function ThresholdForm() {
   async function onSet() {
     setError(null);
     const p = Number(percent.replace(",", "."));
-    if (!Number.isFinite(p) || p < 0 || p > 100) return setError("Pourcentage entre 0 et 100.");
+    if (!Number.isFinite(p) || p < 0 || p > 100) return setError("Percentage between 0 and 100.");
     const bps = BigInt(Math.round(p * 100));
-    const ok = await direct("Changer le seuil", {
+    const ok = await direct("Change threshold", {
       address: deployment.centralBank,
       abi: centralBankAbi,
       functionName: "setReserveRatioThreshold",
@@ -106,14 +107,14 @@ function ThresholdForm() {
   }
 
   return (
-    <Card title="Paramètre de ratio">
-      <Field label="Nouveau seuil (%)" hint="paramètre macroprudentiel ; ne bloque jamais un paiement (contrainte soft)">
-        <input value={percent} onChange={(e) => setPercent(e.target.value)} placeholder="ex. 10" disabled={isBusy} inputMode="decimal" />
+    <Card title="Ratio parameter">
+      <Field label="New threshold (%)" hint="macroprudential parameter; never blocks a payment (soft constraint)">
+        <input value={percent} onChange={(e) => setPercent(e.target.value)} placeholder="e.g. 10" disabled={isBusy} inputMode="decimal" />
       </Field>
       {error && <p className="note note-bad">{error}</p>}
       <div className="btn-row">
         <Button onClick={onSet} disabled={isBusy || !percent}>
-          Appliquer le seuil
+          Apply threshold
         </Button>
       </div>
       <TxStatus feedback={feedback} />
@@ -121,7 +122,7 @@ function ThresholdForm() {
   );
 }
 
-export function CentralBankView() {
+export function CentralBankView({ readOnly }: { readOnly?: boolean }) {
   const s = useSystemSnapshot();
   const breaches = useRatioBreaches({ limit: 20 });
   const payments = usePayments({ limit: 25 });
@@ -129,12 +130,13 @@ export function CentralBankView() {
 
   return (
     <div className="stack">
-      <Card title="Agrégats macro">
+      {readOnly && <ReadOnlyBanner role="central bank" />}
+      <Card title="Macro aggregates">
         <div className="stat-grid">
           <Stat label="M0 (wCBDC)" value={<Amount value={s.m0} symbol="wCBDC" />} />
-          <Stat label="M1 total" value={<Amount value={totalM1} />} />
+          <Stat label="Total M1" value={<Amount value={totalM1} />} />
           <Stat label="sEUR" value={<Amount value={s.stable.supply} symbol="sEUR" />} />
-          <Stat label="Seuil réglementaire" value={<Percent bps={s.thresholdBps} />} />
+          <Stat label="Regulatory threshold" value={<Percent bps={s.thresholdBps} />} />
         </div>
       </Card>
 
@@ -148,8 +150,8 @@ export function CentralBankView() {
               actions={<HealthBadge ratioBps={bank.ratioBps} thresholdBps={s.thresholdBps} reserves={bank.reserves} />}
             >
               <div className="stat-grid">
-                <Stat label="Réserves (wCBDC)" value={<Amount value={bank.reserves} />} />
-                <Stat label={`Dépôts (${BANKS[key].depSymbol})`} value={<Amount value={bank.m1} />} />
+                <Stat label="Reserves (wCBDC)" value={<Amount value={bank.reserves} />} />
+                <Stat label={`Deposits (${BANKS[key].depSymbol})`} value={<Amount value={bank.m1} />} />
                 <Stat label="Ratio" value={<Percent bps={bank.ratioBps} />} />
               </div>
             </Card>
@@ -162,11 +164,11 @@ export function CentralBankView() {
         <ThresholdForm />
       </div>
 
-      <Card title="Mur d'alertes — ReserveRatioBreached">
+      <Card title="Alert wall — ReserveRatioBreached">
         <BreachesList rows={breaches.data} />
       </Card>
 
-      <Card title="Flux interbancaires & paiements">
+      <Card title="Interbank flows & payments">
         <PaymentsList rows={payments.data} />
       </Card>
     </div>

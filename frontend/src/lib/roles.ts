@@ -36,9 +36,9 @@ export function resolveRole(i: RoleInputs): RoleResolution {
 }
 
 export const ROLE_LABEL: Record<Role, string> = {
-  observer: "Observateur",
+  observer: "Observer",
   client: "Client",
-  bankOperator: "Opérateur de banque",
-  stableCoOperator: "Opérateur StableCo",
-  centralBankOperator: "Banque centrale",
+  bankOperator: "Bank operator",
+  stableCoOperator: "StableCo operator",
+  centralBankOperator: "Central bank",
 };

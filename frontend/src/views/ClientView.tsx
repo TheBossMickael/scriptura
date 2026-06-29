@@ -24,52 +24,52 @@ export function ClientView({ bankKey }: { bankKey: BankKey }) {
   return (
     <div className="stack">
       <div className="grid-2">
-        <Card title="Mes soldes" subtitle={`Client de ${bank.label}`}>
+        <Card title="My balances" subtitle={`Client of ${bank.label}`}>
           <div className="stat-grid">
             <Stat label={bank.depSymbol} value={<Amount value={balances.dep} symbol={bank.depSymbol} />} />
             <Stat label="sEUR" value={<Amount value={balances.seur} symbol="sEUR" />} />
           </div>
           <p className="note">
-            {bank.depSymbol} = vos euros déposés à la {bank.label} (monnaie de banque commerciale). sEUR = stablecoin
-            adossé à ces dépôts.
+            {bank.depSymbol} = your euros deposited at {bank.label} (commercial-bank money). sEUR = a stablecoin backed
+            by those deposits.
           </p>
         </Card>
         <Card
-          title={`Santé de ${bank.label}`}
+          title={`${bank.label} health`}
           actions={<HealthBadge ratioBps={myBank.ratioBps} thresholdBps={snapshot.thresholdBps} reserves={myBank.reserves} />}
         >
           <div className="stat-grid">
-            <Stat label="Réserves (wCBDC)" value={<Amount value={myBank.reserves} />} />
-            <Stat label="Ratio de réserves" value={<Percent bps={myBank.ratioBps} />} />
+            <Stat label="Reserves (wCBDC)" value={<Amount value={myBank.reserves} />} />
+            <Stat label="Reserve ratio" value={<Percent bps={myBank.ratioBps} />} />
           </div>
           <RatioGauge ratioBps={myBank.ratioBps} thresholdBps={snapshot.thresholdBps} />
         </Card>
       </div>
 
       <div className="grid-2">
-        <Card title="Payer">
+        <Card title="Pay">
           <PaymentForm account={address} bankKey={bankKey} depBalance={balances.dep} />
         </Card>
         <div className="stack">
-          <Card title="Stablecoin sEUR — mint / redeem">
+          <Card title="sEUR stablecoin — mint / redeem">
             <MintRedeemForm account={address} bankKey={bankKey} depBalance={balances.dep} seurBalance={balances.seur} />
           </Card>
-          <Card title="Transfert sEUR (P2P)">
+          <Card title="sEUR transfer (P2P)">
             <P2PForm account={address} seurBalance={balances.seur} />
           </Card>
         </div>
       </div>
 
-      <Card title="Mon historique de paiements">
-        <PaymentsList rows={payments.data} empty="Aucun paiement pour l'instant." />
+      <Card title="My payment history">
+        <PaymentsList rows={payments.data} empty="No payments yet." />
       </Card>
 
       <div className="grid-2">
-        <Card title="Mes mint / redeem sEUR">
-          <StableFlowsList rows={flows.data} empty="Aucun mint/redeem." />
+        <Card title="My sEUR mint / redeem">
+          <StableFlowsList rows={flows.data} empty="No mint/redeem." />
         </Card>
-        <Card title="Mes transferts sEUR">
-          <SeurTransfersList rows={seurTx.data} empty="Aucun transfert sEUR." />
+        <Card title="My sEUR transfers">
+          <SeurTransfersList rows={seurTx.data} empty="No sEUR transfers." />
         </Card>
       </div>
     </div>

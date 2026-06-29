@@ -135,37 +135,37 @@ export function faucet(address: Address, bank: BankKey): Promise<FaucetSuccess> 
   return post<FaucetSuccess>("/faucet", { address, bank });
 }
 
-/** Maps a relayer error to a short French message for the UI. */
+/** Maps a relayer error to a short message for the UI. */
 export function describeRelayerError(error: unknown): string {
   if (!(error instanceof RelayerError)) {
-    return error instanceof Error ? error.message : "Erreur inconnue";
+    return error instanceof Error ? error.message : "Unknown error";
   }
   switch (error.code) {
     case "network_error":
-      return "Relayer injoignable (le service tourne-t-il ?).";
+      return "Relayer unreachable (is the service running?).";
     case "invalid_request":
-      return "Requête invalide.";
+      return "Invalid request.";
     case "invalid_signature":
-      return "Signature invalide.";
+      return "Invalid signature.";
     case "intent_expired":
-      return "Intent expiré, relancez l'opération.";
+      return "Intent expired — please retry.";
     case "nonce_mismatch":
-      return "Une opération précédente n'est pas encore confirmée — patientez puis réessayez.";
+      return "A previous action isn't confirmed yet — wait, then retry.";
     case "authorization_already_used":
-      return "Autorisation déjà utilisée.";
+      return "Authorization already used.";
     case "authorization_not_yet_valid":
     case "authorization_expired":
-      return "Fenêtre de validité de l'autorisation dépassée.";
+      return "Authorization validity window has passed.";
     case "onboard_reverted":
       return error.reason === "AlreadyClient"
-        ? "Cette adresse est déjà cliente."
-        : `Onboarding refusé (${error.reason ?? "raison inconnue"}).`;
+        ? "This address is already a client."
+        : `Onboarding rejected (${error.reason ?? "unknown reason"}).`;
     case "execution_reverted":
-      return `Transaction rejetée on-chain : ${error.reason ?? "raison inconnue"}.`;
+      return `Transaction reverted on-chain: ${error.reason ?? "unknown reason"}.`;
     case "rpc_error":
-      return "Erreur RPC côté relayer.";
+      return "RPC error on the relayer.";
     case "submission_failed":
-      return "Échec de soumission (relayer en manque de gas ?).";
+      return "Submission failed (is the relayer out of gas?).";
     default:
       return error.message;
   }

@@ -1,11 +1,10 @@
 import type { ReactNode } from "react";
-import { Card, Stat } from "../components/ui";
+import { Badge, Card, Stat } from "../components/ui";
 import { Amount, HealthBadge, Percent, RatioGauge } from "../components/metrics";
 import { BreachesList, PaymentsList } from "../components/History";
 import { useSystemSnapshot } from "../hooks/useReads";
 import { usePayments, useRatioBreaches } from "../hooks/usePonder";
 import { BANKS } from "../lib/directory";
-import { Badge } from "../components/ui";
 
 /** Public read-only dashboard: every metric, no actions. `joinSlot` carries the Option B card. */
 export function ObserverView({ joinSlot }: { joinSlot?: ReactNode }) {
@@ -19,22 +18,18 @@ export function ObserverView({ joinSlot }: { joinSlot?: ReactNode }) {
     <div className="stack">
       {joinSlot}
 
-      <Card title="Agrégats monétaires">
+      <Card title="Monetary aggregates">
         <div className="stat-grid">
-          <Stat label="M0 — monnaie centrale (wCBDC)" value={<Amount value={s.m0} symbol="wCBDC" />} />
-          <Stat label="M1 — Banque A (DEP-A)" value={<Amount value={s.bankA.m1} symbol="DEP-A" />} />
-          <Stat label="M1 — Banque B (DEP-B)" value={<Amount value={s.bankB.m1} symbol="DEP-B" />} />
-          <Stat label="M1 total" value={<Amount value={totalM1} />} />
-          <Stat label="sEUR en circulation" value={<Amount value={s.stable.supply} symbol="sEUR" />} />
-          <Stat
-            label="Seuil réglementaire"
-            value={<Percent bps={s.thresholdBps} />}
-            hint="ratio de réserves minimal"
-          />
+          <Stat label="M0 — central-bank money (wCBDC)" value={<Amount value={s.m0} symbol="wCBDC" />} />
+          <Stat label="M1 — Bank A (DEP-A)" value={<Amount value={s.bankA.m1} symbol="DEP-A" />} />
+          <Stat label="M1 — Bank B (DEP-B)" value={<Amount value={s.bankB.m1} symbol="DEP-B" />} />
+          <Stat label="Total M1" value={<Amount value={totalM1} />} />
+          <Stat label="sEUR in circulation" value={<Amount value={s.stable.supply} symbol="sEUR" />} />
+          <Stat label="Regulatory threshold" value={<Percent bps={s.thresholdBps} />} hint="minimum reserve ratio" />
         </div>
         <p className="note">
-          wCBDC = euros de banque centrale · DEP-A/DEP-B = euros de banque commerciale (dépôts tokenisés) · sEUR =
-          stablecoin adossé aux dépôts.
+          wCBDC = central-bank euros · DEP-A/DEP-B = commercial-bank euros (tokenized deposits) · sEUR = a stablecoin
+          backed by deposits.
         </p>
       </Card>
 
@@ -45,15 +40,16 @@ export function ObserverView({ joinSlot }: { joinSlot?: ReactNode }) {
             <Card
               key={key}
               title={BANKS[key].label}
-              actions={
-                <HealthBadge ratioBps={bank.ratioBps} thresholdBps={s.thresholdBps} reserves={bank.reserves} />
-              }
+              actions={<HealthBadge ratioBps={bank.ratioBps} thresholdBps={s.thresholdBps} reserves={bank.reserves} />}
             >
               <div className="stat-grid">
-                <Stat label="Réserves (wCBDC)" value={<Amount value={bank.reserves} />} />
-                <Stat label={`Dépôts (${BANKS[key].depSymbol})`} value={<Amount value={bank.m1} />} />
-                <Stat label="Ratio de réserves" value={<Percent bps={bank.ratioBps} />} />
-                <Stat label="État du dépôt" value={bank.paused ? <Badge tone="bad">Gelé</Badge> : <Badge tone="good">Actif</Badge>} />
+                <Stat label="Reserves (wCBDC)" value={<Amount value={bank.reserves} />} />
+                <Stat label={`Deposits (${BANKS[key].depSymbol})`} value={<Amount value={bank.m1} />} />
+                <Stat label="Reserve ratio" value={<Percent bps={bank.ratioBps} />} />
+                <Stat
+                  label="Deposit status"
+                  value={bank.paused ? <Badge tone="bad">Frozen</Badge> : <Badge tone="good">Active</Badge>}
+                />
               </div>
               <RatioGauge ratioBps={bank.ratioBps} thresholdBps={s.thresholdBps} />
             </Card>
@@ -62,21 +58,21 @@ export function ObserverView({ joinSlot }: { joinSlot?: ReactNode }) {
       </div>
 
       <Card
-        title="StableCo — preuve de réserves"
-        actions={s.stable.paused ? <Badge tone="warn">Mint/redeem en pause</Badge> : <Badge tone="good">Actif</Badge>}
+        title="StableCo — proof of reserves"
+        actions={s.stable.paused ? <Badge tone="warn">Mint/redeem paused</Badge> : <Badge tone="good">Active</Badge>}
       >
         <div className="stat-grid">
-          <Stat label="Réserves (DEP-A)" value={<Amount value={s.stable.reserves} symbol="DEP-A" />} />
-          <Stat label="sEUR émis" value={<Amount value={s.stable.supply} symbol="sEUR" />} />
-          <Stat label="Couverture" value={<Percent bps={s.stable.coverageBps} />} hint="≥ 100 % attendu" />
+          <Stat label="Reserves (DEP-A)" value={<Amount value={s.stable.reserves} symbol="DEP-A" />} />
+          <Stat label="sEUR issued" value={<Amount value={s.stable.supply} symbol="sEUR" />} />
+          <Stat label="Coverage" value={<Percent bps={s.stable.coverageBps} />} hint="≥ 100% expected" />
         </div>
       </Card>
 
-      <Card title="Derniers paiements">
+      <Card title="Recent payments">
         <PaymentsList rows={payments.data} />
       </Card>
 
-      <Card title="Mur d'alertes — ratio de réserves">
+      <Card title="Alert wall — reserve ratio">
         <BreachesList rows={breaches.data} />
       </Card>
     </div>

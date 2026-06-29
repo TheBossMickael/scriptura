@@ -5,6 +5,7 @@ import { Badge, Button, Card, Field, Stat } from "../components/ui";
 import { Amount, HealthBadge, Percent, RatioGauge } from "../components/metrics";
 import { PaymentsList } from "../components/History";
 import { TxStatus } from "../components/TxStatus";
+import { ReadOnlyBanner } from "../components/Explore";
 import { useTx } from "../hooks/useActions";
 import { useSystemSnapshot } from "../hooks/useReads";
 import { useClients, usePayments } from "../hooks/usePonder";
@@ -43,7 +44,7 @@ function ClientRow({
       </td>
       <td>
         <Button variant="ghost" disabled={disabled} onClick={() => onRemove(address)}>
-          Retirer
+          Remove
         </Button>
       </td>
     </tr>
@@ -55,7 +56,7 @@ function ClientsCard({ bank }: { bank: BankInfo }) {
   const { direct, feedback, isBusy } = useTx();
 
   const onRemove = (address: Address) =>
-    direct("Retirer un client", {
+    direct("Remove a client", {
       address: bank.bank,
       abi: commercialBankAbi,
       functionName: "removeClient",
@@ -63,17 +64,17 @@ function ClientsCard({ bank }: { bank: BankInfo }) {
     });
 
   return (
-    <Card title="Clients enregistrés">
+    <Card title="Registered clients">
       {!clients.data ? (
-        <p className="muted">Indexeur indisponible.</p>
+        <p className="muted">Indexer unavailable.</p>
       ) : clients.data.length === 0 ? (
-        <p className="muted">Aucun client.</p>
+        <p className="muted">No clients.</p>
       ) : (
         <table className="table">
           <thead>
             <tr>
               <th>Client</th>
-              <th className="num">Solde</th>
+              <th className="num">Balance</th>
               <th />
             </tr>
           </thead>
@@ -84,7 +85,7 @@ function ClientsCard({ bank }: { bank: BankInfo }) {
           </tbody>
         </table>
       )}
-      <p className="note">Un client ne peut être retiré que si son solde DEP est à zéro.</p>
+      <p className="note">A client can only be removed when its DEP balance is zero.</p>
       <TxStatus feedback={feedback} />
     </Card>
   );
@@ -99,17 +100,17 @@ function AddClientForm({ bank }: { bank: BankInfo }) {
 
   async function onAdd() {
     setError(null);
-    if (!looksLikeAddress(addr)) return setError("Adresse invalide.");
+    if (!looksLikeAddress(addr)) return setError("Invalid address.");
     let amount = 0n;
     if (credit.trim()) {
       try {
         amount = parseAmount(credit);
       } catch {
-        return setError("Montant de crédit invalide.");
+        return setError("Invalid credit amount.");
       }
     }
     const client = addr.trim() as Address;
-    const ok = await run("Ajouter un client", async (onHash) => {
+    const ok = await run("Add a client", async (onHash) => {
       await simulate({ address: bank.bank, abi: commercialBankAbi, functionName: "registerClient", args: [client] });
       const h1 = await writeContractAsync({
         address: bank.bank,
@@ -140,17 +141,17 @@ function AddClientForm({ bank }: { bank: BankInfo }) {
   }
 
   return (
-    <Card title="Ajouter un client">
-      <Field label="Adresse du client">
+    <Card title="Add a client">
+      <Field label="Client address">
         <input value={addr} onChange={(e) => setAddr(e.target.value)} placeholder="0x…" disabled={isBusy} />
       </Field>
-      <Field label="Crédit initial (optionnel)">
-        <input value={credit} onChange={(e) => setCredit(e.target.value)} placeholder="ex. 100000" disabled={isBusy} inputMode="decimal" />
+      <Field label="Initial credit (optional)">
+        <input value={credit} onChange={(e) => setCredit(e.target.value)} placeholder="e.g. 100000" disabled={isBusy} inputMode="decimal" />
       </Field>
       {error && <p className="note note-bad">{error}</p>}
       <div className="btn-row">
         <Button onClick={onAdd} disabled={isBusy || !addr}>
-          Enregistrer{credit.trim() ? " + créditer" : ""}
+          Register{credit.trim() ? " + credit" : ""}
         </Button>
       </div>
       <TxStatus feedback={feedback} />
@@ -158,7 +159,7 @@ function AddClientForm({ bank }: { bank: BankInfo }) {
   );
 }
 
-export function BankOperatorView({ bankKey }: { bankKey: BankKey }) {
+export function BankOperatorView({ bankKey, readOnly }: { bankKey: BankKey; readOnly?: boolean }) {
   const bank = BANKS[bankKey];
   const snapshot = useSystemSnapshot();
   const data = bankKey === "A" ? snapshot.bankA : snapshot.bankB;
@@ -169,51 +170,52 @@ export function BankOperatorView({ bankKey }: { bankKey: BankKey }) {
 
   return (
     <div className="stack">
+      {readOnly && <ReadOnlyBanner role={`${bank.label} operator`} />}
       <Card
-        title={`Bilan — ${bank.label}`}
+        title={`Balance sheet — ${bank.label}`}
         actions={<HealthBadge ratioBps={data.ratioBps} thresholdBps={snapshot.thresholdBps} reserves={data.reserves} />}
       >
         <div className="grid-2">
           <div>
-            <h3>Actif</h3>
+            <h3>Assets</h3>
             <div className="stat-grid">
-              <Stat label="Réserves (wCBDC)" value={<Amount value={data.reserves} />} />
-              <Stat label="Prêts (convention de genèse)" value={<Amount value={GENESIS_LOANS} />} />
-              <Stat label="Total actif" value={<Amount value={assetsTotal} />} />
+              <Stat label="Reserves (wCBDC)" value={<Amount value={data.reserves} />} />
+              <Stat label="Loans (genesis convention)" value={<Amount value={GENESIS_LOANS} />} />
+              <Stat label="Total assets" value={<Amount value={assetsTotal} />} />
             </div>
           </div>
           <div>
-            <h3>Passif</h3>
+            <h3>Liabilities</h3>
             <div className="stat-grid">
-              <Stat label={`Dépôts (${bank.depSymbol})`} value={<Amount value={data.m1} />} />
-              <Stat label="Ratio de réserves" value={<Percent bps={data.ratioBps} />} />
-              <Stat label="État" value={data.paused ? <Badge tone="bad">Gelée</Badge> : <Badge tone="good">Active</Badge>} />
+              <Stat label={`Deposits (${bank.depSymbol})`} value={<Amount value={data.m1} />} />
+              <Stat label="Reserve ratio" value={<Percent bps={data.ratioBps} />} />
+              <Stat label="Status" value={data.paused ? <Badge tone="bad">Frozen</Badge> : <Badge tone="good">Active</Badge>} />
             </div>
           </div>
         </div>
         <RatioGauge ratioBps={data.ratioBps} thresholdBps={snapshot.thresholdBps} />
         <p className="note">
-          Les DEP sont des euros de banque commerciale tokenisés (passif de la banque). La ligne « Prêts » est une
-          convention de genèse non tokenisée (3 500 000), non mise à jour par les crédits en V1.
+          DEP are tokenized commercial-bank euros (the bank's liability). The “Loans” line is a non-tokenized genesis
+          convention (3,500,000), not updated by credits in V1.
         </p>
       </Card>
 
-      <Card title="Gel de la banque" subtitle="Suspend tout mouvement de dépôts (le sEUR continue de circuler)">
+      <Card title="Freeze the bank" subtitle="Halts all deposit movements (sEUR keeps circulating)">
         <div className="btn-row">
           {data.paused ? (
             <Button
-              onClick={() => direct("Dégeler la banque", { address: bank.bank, abi: commercialBankAbi, functionName: "unfreeze" })}
+              onClick={() => direct("Unfreeze the bank", { address: bank.bank, abi: commercialBankAbi, functionName: "unfreeze" })}
               disabled={isBusy}
             >
-              Dégeler
+              Unfreeze
             </Button>
           ) : (
             <Button
               variant="danger"
-              onClick={() => direct("Geler la banque", { address: bank.bank, abi: commercialBankAbi, functionName: "freeze" })}
+              onClick={() => direct("Freeze the bank", { address: bank.bank, abi: commercialBankAbi, functionName: "freeze" })}
               disabled={isBusy}
             >
-              Geler
+              Freeze
             </Button>
           )}
         </div>
@@ -225,8 +227,8 @@ export function BankOperatorView({ bankKey }: { bankKey: BankKey }) {
         <ClientsCard bank={bank} />
       </div>
 
-      <Card title="Flux entrants / sortants">
-        <PaymentsList rows={flows.data} empty="Aucun flux." />
+      <Card title="Inflows / outflows">
+        <PaymentsList rows={flows.data} empty="No flows." />
       </Card>
     </div>
   );

@@ -21,8 +21,8 @@ export function Header({ resolution }: { resolution: RoleResolution }) {
       <div className="brand">
         <span className="brand-mark">€</span>
         <div>
-          <h1>Two-Tier Money Sandbox</h1>
-          <p className="brand-sub">Monnaie centrale · dépôts · stablecoin — règlement atomique</p>
+          <h1>Two-Tier Money</h1>
+          <p className="brand-sub">Central-bank money · deposits · stablecoin — atomic settlement</p>
         </div>
       </div>
 
@@ -30,7 +30,7 @@ export function Header({ resolution }: { resolution: RoleResolution }) {
         {isConnected && <Badge tone="neutral">{roleLabel}</Badge>}
         {wrongNetwork && (
           <Button variant="danger" disabled={isBusy} onClick={() => switchChain({ chainId: targetChain.id })}>
-            Basculer sur {targetChain.name}
+            Switch to {targetChain.name}
           </Button>
         )}
         {isConnected ? (
@@ -39,12 +39,12 @@ export function Header({ resolution }: { resolution: RoleResolution }) {
               {labelForAddress(address)}
             </span>
             <Button variant="ghost" disabled={isBusy} onClick={() => disconnect()}>
-              Déconnecter
+              Disconnect
             </Button>
           </>
         ) : (
           <Button onClick={() => injected && connect({ connector: injected })} disabled={!injected || isPending || isBusy}>
-            {isPending ? "Connexion…" : "Connecter MetaMask"}
+            {isPending ? "Connecting…" : "Connect MetaMask"}
           </Button>
         )}
       </div>

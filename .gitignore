@@ -4,9 +4,10 @@ contracts/cache/
 contracts/out/
 contracts/broadcast/
 relayer/dist/
-# tsx writes temp files under a literal "undefined" dir when the temp path env is
-# unset in the spawning shell — never source, never commit.
-relayer/undefined/
+# tsx caches into os.tmpdir(), which Node-Windows resolves to a literal "undefined\temp"
+# when TEMP/TMP/SystemRoot are stripped from the make recipe shell (MSYS). Lands at the
+# repo root (make relayer-dev runs from root) or under relayer/. Harmless cache, never commit.
+undefined/
 frontend/dist/
 # Ponder indexer runtime artifacts (derived DB + cache; rebuildable from chain).
 indexer/.ponder/

@@ -72,7 +72,7 @@ export interface BankInfo {
 export const BANKS: Record<BankKey, BankInfo> = {
   A: {
     key: "A",
-    label: "Banque A",
+    label: "Bank A",
     bank: deployment.bankA,
     operator: deployment.bankAOperator,
     dep: deployment.depA,
@@ -80,7 +80,7 @@ export const BANKS: Record<BankKey, BankInfo> = {
   },
   B: {
     key: "B",
-    label: "Banque B",
+    label: "Bank B",
     bank: deployment.bankB,
     operator: deployment.bankBOperator,
     dep: deployment.depB,
@@ -93,18 +93,18 @@ const ACTOR_LABELS: Record<string, string> = {};
 function label(addr: Address | undefined, name: string): void {
   if (addr) ACTOR_LABELS[addr.toLowerCase()] = name;
 }
-label(deployment.centralBankOperator, "Banque centrale (opérateur)");
-label(deployment.bankAOperator, "Opérateur Banque A");
-label(deployment.bankBOperator, "Opérateur Banque B");
-label(deployment.stableCoOperator, "Opérateur StableCo");
+label(deployment.centralBankOperator, "Central bank (operator)");
+label(deployment.bankAOperator, "Bank A operator");
+label(deployment.bankBOperator, "Bank B operator");
+label(deployment.stableCoOperator, "StableCo operator");
 label(deployment.alice1, "Alice 1");
 label(deployment.alice2, "Alice 2");
 label(deployment.bob1, "Bob 1");
 label(deployment.bob2, "Bob 2");
 label(deployment.relayer, "Relayer");
 label(deployment.stableCo, "StableCo");
-label(deployment.bankA, "Banque A");
-label(deployment.bankB, "Banque B");
+label(deployment.bankA, "Bank A");
+label(deployment.bankB, "Bank B");
 
 export interface KnownClient {
   address: Address;
@@ -114,10 +114,10 @@ export interface KnownClient {
 
 /** The genesis client EOAs, for recipient pickers (self-onboarded clients use manual entry). */
 export const CLIENTS: KnownClient[] = [
-  { address: deployment.alice1, label: "Alice 1 (Banque A)", bankKey: "A" },
-  { address: deployment.alice2, label: "Alice 2 (Banque A)", bankKey: "A" },
-  { address: deployment.bob1, label: "Bob 1 (Banque B)", bankKey: "B" },
-  { address: deployment.bob2, label: "Bob 2 (Banque B)", bankKey: "B" },
+  { address: deployment.alice1, label: "Alice 1 (Bank A)", bankKey: "A" },
+  { address: deployment.alice2, label: "Alice 2 (Bank A)", bankKey: "A" },
+  { address: deployment.bob1, label: "Bob 1 (Bank B)", bankKey: "B" },
+  { address: deployment.bob2, label: "Bob 2 (Bank B)", bankKey: "B" },
 ];
 
 /** A short, human label for an address (named actor, or truncated 0x…). */

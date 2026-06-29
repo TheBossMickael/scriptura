@@ -47,15 +47,15 @@ export function PaymentForm({
 
   async function onSubmit() {
     setFormError(null);
-    if (!recipient) return setFormError("Destinataire invalide.");
-    if (!publicClient) return setFormError("Client RPC indisponible.");
+    if (!recipient) return setFormError("Invalid recipient.");
+    if (!publicClient) return setFormError("RPC client unavailable.");
     let value: bigint;
     try {
       value = parseAmount(amount);
     } catch {
-      return setFormError("Montant invalide.");
+      return setFormError("Invalid amount.");
     }
-    if (value <= 0n) return setFormError("Le montant doit être positif.");
+    if (value <= 0n) return setFormError("Amount must be positive.");
 
     const engine = deployment.settlementEngine;
     const nonce = (await publicClient.readContract({
@@ -76,7 +76,7 @@ export function PaymentForm({
     };
 
     const ok = await relay(
-      "Paiement",
+      "Payment",
       () =>
         signTypedDataAsync({
           domain: intentDomain(expectedChainId, engine),
@@ -91,10 +91,10 @@ export function PaymentForm({
 
   return (
     <div>
-      <Field label="Destinataire">
+      <Field label="Recipient">
         <select value={mode} onChange={(e) => setMode(e.target.value as "known" | "manual")} disabled={isBusy}>
-          <option value="known">Client connu</option>
-          <option value="manual">Adresse manuelle</option>
+          <option value="known">Known client</option>
+          <option value="manual">Manual address</option>
         </select>
       </Field>
 
@@ -110,37 +110,37 @@ export function PaymentForm({
         </Field>
       ) : (
         <>
-          <Field label="Adresse du destinataire">
+          <Field label="Recipient address">
             <input value={manualAddr} onChange={(e) => setManualAddr(e.target.value)} placeholder="0x…" disabled={isBusy} />
           </Field>
-          <Field label="Banque du destinataire">
+          <Field label="Recipient's bank">
             <select value={manualBank} onChange={(e) => setManualBank(e.target.value as BankKey)} disabled={isBusy}>
-              <option value="A">Banque A</option>
-              <option value="B">Banque B</option>
+              <option value="A">Bank A</option>
+              <option value="B">Bank B</option>
             </select>
           </Field>
         </>
       )}
 
       <Field
-        label="Montant (DEP)"
-        hint={depBalance !== undefined ? `Solde disponible : ${formatAmount(depBalance)} ${BANKS[bankKey].depSymbol}` : undefined}
+        label="Amount (DEP)"
+        hint={depBalance !== undefined ? `Available balance: ${formatAmount(depBalance)} ${BANKS[bankKey].depSymbol}` : undefined}
       >
-        <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="ex. 1000" disabled={isBusy} inputMode="decimal" />
+        <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 1000" disabled={isBusy} inputMode="decimal" />
       </Field>
 
       {recipient && (
         <p className="note">
           {interbank
-            ? `Paiement interbancaire : règlement en monnaie centrale (wCBDC) de ${BANKS[bankKey].label} vers ${BANKS[recipient.bankKey].label}, atomiquement dans la même transaction.`
-            : "Paiement intrabancaire : simple transfert de dépôts au sein de la même banque, sans monnaie centrale."}
+            ? `Interbank payment: settled in central-bank money (wCBDC) from ${BANKS[bankKey].label} to ${BANKS[recipient.bankKey].label}, atomically in the same transaction.`
+            : "Intrabank payment: a simple deposit transfer within the same bank, no central-bank money."}
         </p>
       )}
       {formError && <p className="note note-bad">{formError}</p>}
 
       <div className="btn-row">
         <Button onClick={onSubmit} disabled={isBusy || !recipient || !amount || insufficient}>
-          Payer (gasless)
+          Pay (gasless)
         </Button>
       </div>
       <TxStatus feedback={feedback} />

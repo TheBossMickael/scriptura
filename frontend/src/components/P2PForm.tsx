@@ -29,18 +29,18 @@ export function P2PForm({ account, seurBalance }: { account: Address; seurBalanc
   function validate(): { to: Address; value: bigint } | null {
     setFormError(null);
     if (!looksLikeAddress(to)) {
-      setFormError("Adresse destinataire invalide.");
+      setFormError("Invalid recipient address.");
       return null;
     }
     let value: bigint;
     try {
       value = parseAmount(amount);
     } catch {
-      setFormError("Montant invalide.");
+      setFormError("Invalid amount.");
       return null;
     }
     if (value <= 0n) {
-      setFormError("Le montant doit être positif.");
+      setFormError("Amount must be positive.");
       return null;
     }
     return { to: to.trim() as Address, value };
@@ -59,7 +59,7 @@ export function P2PForm({ account, seurBalance }: { account: Address; seurBalanc
       nonce: randomNonce(),
     };
     const ok = await relay(
-      "Transfert sEUR (gasless)",
+      "sEUR transfer (gasless)",
       () =>
         signTypedDataAsync({
           domain: seurDomain(expectedChainId, deployment.seur),
@@ -75,7 +75,7 @@ export function P2PForm({ account, seurBalance }: { account: Address; seurBalanc
   async function onDirect() {
     const v = validate();
     if (!v) return;
-    const ok = await direct("Transfert sEUR (direct)", {
+    const ok = await direct("sEUR transfer (direct)", {
       address: deployment.seur,
       abi: seurAbi,
       functionName: "transfer",
@@ -86,33 +86,33 @@ export function P2PForm({ account, seurBalance }: { account: Address; seurBalanc
 
   return (
     <div>
-      <Field label="Destinataire">
+      <Field label="Recipient">
         <input value={to} onChange={(e) => setTo(e.target.value)} placeholder="0x…" disabled={isBusy} />
       </Field>
       <Field
-        label="Montant (sEUR)"
-        hint={seurBalance !== undefined ? `Solde disponible : ${formatAmount(seurBalance)} sEUR` : undefined}
+        label="Amount (sEUR)"
+        hint={seurBalance !== undefined ? `Available balance: ${formatAmount(seurBalance)} sEUR` : undefined}
       >
-        <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="ex. 50" disabled={isBusy} inputMode="decimal" />
+        <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 50" disabled={isBusy} inputMode="decimal" />
       </Field>
       {formError && <p className="note note-bad">{formError}</p>}
 
       <div className="btn-row">
         <Button onClick={onGasless} disabled={isBusy || !amount || !to || insufficient}>
-          Envoyer sans gas (relayer)
+          Send gasless (relayer)
         </Button>
         <Button variant="secondary" onClick={onDirect} disabled={isBusy || !amount || !to || insufficient || !hasGas}>
-          Envoyer directement — je paie le gas
+          Send directly — I pay gas
         </Button>
       </div>
 
       {!hasGas && (
         <p className="note">
-          Le transfert direct nécessite du sETH pour le gas.{" "}
+          The direct transfer needs sETH for gas.{" "}
           <a href={SEPOLIA_ETH_FAUCET_URL} target="_blank" rel="noreferrer">
-            Obtenir du sETH (Sepolia)
+            Get sETH (Sepolia)
           </a>
-          . Le chemin « sans gas » ne nécessite aucun sETH.
+          . The gasless path needs no sETH.
         </p>
       )}
       <TxStatus feedback={feedback} />

@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { Header } from "./components/Header";
 import { Card } from "./components/ui";
 import { JoinCard } from "./components/Join";
+import { ViewSwitcher, isPreview, type ViewKey } from "./components/Explore";
 import { ObserverView } from "./views/ObserverView";
 import { ClientView } from "./views/ClientView";
 import { BankOperatorView } from "./views/BankOperatorView";
@@ -14,19 +16,19 @@ import type { Address } from "viem";
 
 function DeploymentIncomplete() {
   return (
-    <Card title="Déploiement incomplet">
+    <Card title="Incomplete deployment">
       <p>
-        Adresses manquantes dans <code>deployments/local.json</code> : {missingContracts.join(", ") || "—"}.
+        Missing addresses in <code>deployments/local.json</code>: {missingContracts.join(", ") || "—"}.
       </p>
       <p>
-        Lance d'abord <code>make deploy-local</code> (avec Anvil) pour générer un fichier complet, puis relance le
-        serveur de dev.
+        Run <code>make deploy-local</code> (with Anvil) first to generate a complete file, then restart the dev server.
       </p>
     </Card>
   );
 }
 
-function renderView(resolution: RoleResolution, address: Address | undefined, isConnected: boolean) {
+/** The connected wallet's own resolved view (with the Option B Join card when relevant). */
+function renderOwnView(resolution: RoleResolution, address: Address | undefined, isConnected: boolean) {
   switch (resolution.role) {
     case "client":
       return resolution.bankKey ? <ClientView bankKey={resolution.bankKey} /> : <ObserverView />;
@@ -42,21 +44,50 @@ function renderView(resolution: RoleResolution, address: Address | undefined, is
   }
 }
 
+/** The selected dashboard — "mine" follows the resolved role; others are read-only previews. */
+function renderSelectedView(
+  view: ViewKey,
+  resolution: RoleResolution,
+  address: Address | undefined,
+  isConnected: boolean,
+) {
+  switch (view) {
+    case "observer":
+      return <ObserverView />;
+    case "bankA":
+      return <BankOperatorView bankKey="A" readOnly={isPreview("bankA", resolution)} />;
+    case "bankB":
+      return <BankOperatorView bankKey="B" readOnly={isPreview("bankB", resolution)} />;
+    case "stableco":
+      return <StableCoView readOnly={isPreview("stableco", resolution)} />;
+    case "centralbank":
+      return <CentralBankView readOnly={isPreview("centralbank", resolution)} />;
+    case "mine":
+    default:
+      return renderOwnView(resolution, address, isConnected);
+  }
+}
+
 export function App() {
   const { resolution, address, isConnected, isLoading } = useRole();
+  const [view, setView] = useState<ViewKey>("mine");
   useChainWatcher();
+
+  const ready = deploymentComplete && !isLoading;
+
   return (
     <div className="app">
       <Header resolution={resolution} />
+      {ready && <ViewSwitcher value={view} onChange={setView} resolution={resolution} isConnected={isConnected} />}
       <main className="container">
         {!deploymentComplete ? (
           <DeploymentIncomplete />
         ) : isLoading ? (
-          <Card title="Chargement">
-            <p>Résolution du rôle…</p>
+          <Card title="Loading">
+            <p>Resolving role…</p>
           </Card>
         ) : (
-          renderView(resolution, address, isConnected)
+          renderSelectedView(view, resolution, address, isConnected)
         )}
       </main>
     </div>

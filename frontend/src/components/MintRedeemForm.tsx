@@ -52,19 +52,19 @@ export function MintRedeemForm({
     try {
       const v = parseAmount(amount);
       if (v <= 0n) {
-        setFormError("Le montant doit être positif.");
+        setFormError("Amount must be positive.");
         return null;
       }
       return v;
     } catch {
-      setFormError("Montant invalide.");
+      setFormError("Invalid amount.");
       return null;
     }
   }
 
   async function onMint() {
     setFormError(null);
-    if (!publicClient) return setFormError("Client RPC indisponible.");
+    if (!publicClient) return setFormError("RPC client unavailable.");
     const value = parseOrError();
     if (value === null) return;
     const intent: MintIntent = {
@@ -90,7 +90,7 @@ export function MintRedeemForm({
 
   async function onRedeem() {
     setFormError(null);
-    if (!publicClient) return setFormError("Client RPC indisponible.");
+    if (!publicClient) return setFormError("RPC client unavailable.");
     const value = parseOrError();
     if (value === null) return;
     const intent: RedeemIntent = {
@@ -117,25 +117,25 @@ export function MintRedeemForm({
   return (
     <div>
       <Field
-        label="Montant"
+        label="Amount"
         hint={
           depBalance !== undefined && seurBalance !== undefined
-            ? `Soldes — DEP : ${formatAmount(depBalance)} · sEUR : ${formatAmount(seurBalance)}`
+            ? `Balances — DEP: ${formatAmount(depBalance)} · sEUR: ${formatAmount(seurBalance)}`
             : undefined
         }
       >
-        <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="ex. 500" disabled={isBusy} inputMode="decimal" />
+        <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 500" disabled={isBusy} inputMode="decimal" />
       </Field>
       {formError && <p className="note note-bad">{formError}</p>}
       <div className="btn-row">
         <Button onClick={onMint} disabled={isBusy || !amount || insufficientDep}>
-          Acheter du sEUR (mint)
+          Buy sEUR (mint)
         </Button>
         <Button variant="secondary" onClick={onRedeem} disabled={isBusy || !amount || insufficientSeur}>
-          Revendre du sEUR (redeem)
+          Sell sEUR (redeem)
         </Button>
       </div>
-      <p className="note">Mint : DEP → sEUR · Redeem : sEUR → DEP (1:1)</p>
+      <p className="note">Mint: DEP → sEUR · Redeem: sEUR → DEP (1:1)</p>
       <TxStatus feedback={feedback} />
     </div>
   );

@@ -12,19 +12,22 @@ export function isUnboundedRatio(bps: bigint): boolean {
   return bps > RATIO_UNBOUNDED_THRESHOLD;
 }
 
-/** Formats a 6-decimals amount with French grouping and up to 2 decimal places. */
+/** Formats a 6-decimals amount with thousands grouping and up to 2 decimal places (en-US). */
 export function formatAmount(value: bigint): string {
   const s = formatUnits(value, DECIMALS);
   const [intPart, fracPart] = s.split(".");
-  const grouped = BigInt(intPart ?? "0").toLocaleString("fr-FR");
+  const grouped = BigInt(intPart ?? "0").toLocaleString("en-US");
   if (!fracPart) return grouped;
   const trimmed = fracPart.slice(0, 2).replace(/0+$/, "");
-  return trimmed ? `${grouped},${trimmed}` : grouped;
+  return trimmed ? `${grouped}.${trimmed}` : grouped;
 }
 
-/** Parses a human amount (e.g. "1500.25") into 6-decimals base units. Throws if malformed. */
+/**
+ * Parses a human amount (e.g. "1500.25" or "1,500.25") into 6-decimals base units. Commas are
+ * treated as thousands separators (en-US). Throws if malformed.
+ */
 export function parseAmount(value: string): bigint {
-  return parseUnits(value.trim().replace(",", "."), DECIMALS);
+  return parseUnits(value.trim().replace(/,/g, ""), DECIMALS);
 }
 
 /** Like parseAmount but returns undefined on empty/invalid input (for live form validation). */

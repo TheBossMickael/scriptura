@@ -1,7 +1,7 @@
 import { parseAbi } from "viem";
 
 /**
- * Hand-written viem ABIs for the Two-Tier Money Sandbox contracts, owned by the frontend
+ * Hand-written viem ABIs for the Two-Tier Money contracts, owned by the frontend
  * (same convention as `relayer/src/abi.ts` and `indexer/abis.ts`: each project declares the
  * minimal ABIs it needs). Covers everything the UI touches: view reads, operator/direct
  * writes, EIP-712 structs for signing, events, and the custom errors worth decoding.
@@ -123,6 +123,7 @@ export const stableCoAbi = parseAbi([
   "error IntentExpired(uint256 deadline)",
   "error InvalidIntentSigner(address recovered, address expected)",
   "error EnforcedPause()",
+  "error AccessControlUnauthorizedAccount(address account, bytes32 neededRole)",
   "error InvalidAccountNonce(address account, uint256 currentNonce)",
 ]);
 

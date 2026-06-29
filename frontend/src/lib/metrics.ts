@@ -7,9 +7,9 @@
 export type Health = "HEALTHY" | "STRESSED" | "ILLIQUID";
 
 export const HEALTH_LABEL: Record<Health, string> = {
-  HEALTHY: "Sain",
-  STRESSED: "Stressé",
-  ILLIQUID: "Illiquide",
+  HEALTHY: "Healthy",
+  STRESSED: "Stressed",
+  ILLIQUID: "Illiquid",
 };
 
 export const HEALTH_EMOJI: Record<Health, string> = {

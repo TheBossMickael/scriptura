@@ -2,6 +2,7 @@ import { Badge, Button, Card, Stat } from "../components/ui";
 import { Amount, Percent } from "../components/metrics";
 import { StableFlowsList } from "../components/History";
 import { TxStatus } from "../components/TxStatus";
+import { ReadOnlyBanner } from "../components/Explore";
 import { useTx } from "../hooks/useActions";
 import { useSystemSnapshot } from "../hooks/useReads";
 import { useSeurHolders, useStableFlows } from "../hooks/usePonder";
@@ -10,7 +11,7 @@ import { deployment, labelForAddress } from "../lib/directory";
 import { formatAmount } from "../lib/format";
 import { isFullyCovered } from "../lib/metrics";
 
-export function StableCoView() {
+export function StableCoView({ readOnly }: { readOnly?: boolean }) {
   const snapshot = useSystemSnapshot();
   const holders = useSeurHolders({ limit: 20 });
   const flows = useStableFlows({ limit: 25 });
@@ -21,57 +22,50 @@ export function StableCoView() {
 
   return (
     <div className="stack">
+      {readOnly && <ReadOnlyBanner role="StableCo operator" />}
       <Card
-        title="StableCo — preuve de réserves"
+        title="StableCo — proof of reserves"
         actions={
           coverageBps === undefined ? (
             <Badge>—</Badge>
           ) : covered ? (
-            <Badge tone="good">Couvert à 100 %+</Badge>
+            <Badge tone="good">Covered ≥ 100%</Badge>
           ) : (
-            <Badge tone="bad">Sous-couvert</Badge>
+            <Badge tone="bad">Under-collateralized</Badge>
           )
         }
       >
         <div className="stat-grid">
-          <Stat label="Réserves (DEP-A)" value={<Amount value={snapshot.stable.reserves} symbol="DEP-A" />} />
-          <Stat label="sEUR émis" value={<Amount value={snapshot.stable.supply} symbol="sEUR" />} />
-          <Stat label="Couverture" value={<Percent bps={coverageBps} />} hint="réserves / supply, ≥ 100 %" />
+          <Stat label="Reserves (DEP-A)" value={<Amount value={snapshot.stable.reserves} symbol="DEP-A" />} />
+          <Stat label="sEUR issued" value={<Amount value={snapshot.stable.supply} symbol="sEUR" />} />
+          <Stat label="Coverage" value={<Percent bps={coverageBps} />} hint="reserves / supply, ≥ 100%" />
           <Stat
-            label="Émission"
-            value={snapshot.stable.paused ? <Badge tone="warn">En pause</Badge> : <Badge tone="good">Active</Badge>}
+            label="Issuance"
+            value={snapshot.stable.paused ? <Badge tone="warn">Paused</Badge> : <Badge tone="good">Active</Badge>}
           />
         </div>
         <p className="note">
-          La supply est endogène : aucun mint admin. Le seul pouvoir de l'opérateur est de suspendre mint/redeem.
+          Supply is endogenous: no admin mint. The operator's only power is to pause mint/redeem.
         </p>
         <div className="btn-row">
           {snapshot.stable.paused ? (
             <Button
               onClick={() =>
-                direct("Reprendre l'émission", {
-                  address: deployment.stableCo,
-                  abi: stableCoAbi,
-                  functionName: "unpause",
-                })
+                direct("Resume issuance", { address: deployment.stableCo, abi: stableCoAbi, functionName: "unpause" })
               }
               disabled={isBusy}
             >
-              Reprendre (unpause)
+              Resume (unpause)
             </Button>
           ) : (
             <Button
               variant="danger"
               onClick={() =>
-                direct("Suspendre l'émission", {
-                  address: deployment.stableCo,
-                  abi: stableCoAbi,
-                  functionName: "pause",
-                })
+                direct("Pause issuance", { address: deployment.stableCo, abi: stableCoAbi, functionName: "pause" })
               }
               disabled={isBusy}
             >
-              Suspendre (pause)
+              Pause
             </Button>
           )}
         </div>
@@ -79,17 +73,17 @@ export function StableCoView() {
       </Card>
 
       <div className="grid-2">
-        <Card title="Détenteurs de sEUR">
+        <Card title="sEUR holders">
           {!holders.data ? (
-            <p className="muted">Indexeur indisponible.</p>
+            <p className="muted">Indexer unavailable.</p>
           ) : holders.data.length === 0 ? (
-            <p className="muted">Aucun détenteur.</p>
+            <p className="muted">No holders.</p>
           ) : (
             <table className="table">
               <thead>
                 <tr>
-                  <th>Détenteur</th>
-                  <th className="num">Solde</th>
+                  <th>Holder</th>
+                  <th className="num">Balance</th>
                 </tr>
               </thead>
               <tbody>
@@ -104,7 +98,7 @@ export function StableCoView() {
           )}
         </Card>
 
-        <Card title="Volumes mint / redeem">
+        <Card title="Mint / redeem volumes">
           <StableFlowsList rows={flows.data} />
         </Card>
       </div>

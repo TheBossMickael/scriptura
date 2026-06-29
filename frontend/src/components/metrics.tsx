@@ -53,7 +53,7 @@ export function RatioGauge({ ratioBps, thresholdBps }: { ratioBps: bigint | unde
   const markerLeft = Math.min(100, (thresholdPct / scaleMaxPct) * 100);
   const below = ratioPct < thresholdPct;
   return (
-    <div className="gauge" title={`Ratio ${formatPercentFromBps(ratioBps)} — seuil ${formatPercentFromBps(thresholdBps)}`}>
+    <div className="gauge" title={`Ratio ${formatPercentFromBps(ratioBps)} — threshold ${formatPercentFromBps(thresholdBps)}`}>
       <div className={`gauge-fill ${below ? "gauge-fill-bad" : "gauge-fill-good"}`} style={{ width: `${fill}%` }} />
       <div className="gauge-threshold" style={{ left: `${markerLeft}%` }} />
     </div>

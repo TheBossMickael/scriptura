@@ -410,6 +410,33 @@ select:focus {
   color: var(--bad);
 }
 
+/* ---- view explorer bar + read-only preview banner ---- */
+.viewbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 14px 28px 0;
+}
+.viewbar-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.viewbar select {
+  padding: 7px 10px;
+}
+.readonly-banner {
+  background: var(--warn-soft);
+  border: 1px solid #f0d9b3;
+  color: var(--warn);
+  border-radius: 9px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
 /* ---- loading skeleton ---- */
 .skeleton {
   display: inline-block;

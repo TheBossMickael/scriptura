@@ -6,7 +6,7 @@ const MAX = 2n ** 256n - 1n;
 describe("parseAmount", () => {
   it("applies 6 decimals", () => expect(parseAmount("1")).toBe(1_000_000n));
   it("handles a decimal point", () => expect(parseAmount("1.5")).toBe(1_500_000n));
-  it("handles a French comma", () => expect(parseAmount("2,25")).toBe(2_250_000n));
+  it("treats a comma as a thousands separator", () => expect(parseAmount("1,000")).toBe(1_000_000_000n));
 });
 
 describe("formatPercentFromBps", () => {

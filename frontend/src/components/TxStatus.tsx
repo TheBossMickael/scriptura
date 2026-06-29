@@ -28,8 +28,8 @@ export function TxStatus({ feedback }: { feedback: TxFeedback }) {
       <div className="txstatus txstatus-pending">
         <Spinner />
         <span>
-          {feedback.label} — transaction en cours…
-          {feedback.hash ? <> · <HashLink hash={feedback.hash} label="suivre" /></> : null}
+          {feedback.label} — pending…
+          {feedback.hash ? <> · <HashLink hash={feedback.hash} label="track" /></> : null}
         </span>
       </div>
     );
@@ -48,7 +48,7 @@ export function TxStatus({ feedback }: { feedback: TxFeedback }) {
   return (
     <div className="txstatus txstatus-done">
       <span>
-        ✓ {feedback.label} — confirmé · <HashLink hash={feedback.hash} label="voir la transaction" />
+        ✓ {feedback.label} — confirmed · <HashLink hash={feedback.hash} label="view transaction" />
       </span>
     </div>
   );
