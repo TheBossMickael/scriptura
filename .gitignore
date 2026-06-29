@@ -1,4 +1,6 @@
 .env
+# Private assistant instructions — kept local, not published (already in past history; that's fine).
+CLAUDE.md
 node_modules/
 contracts/cache/
 contracts/out/
