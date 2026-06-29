@@ -1,6 +1,6 @@
 # Two-Tier Money Sandbox — Makefile
 # Recipes source .env themselves (set -a) so the per-role keys/addresses reach forge/npm.
-# CHAIN selects the target for seed/up/fund-check: local (default) | sepolia.
+# CHAIN selects the target for seed/fund-check: local (default) | sepolia.
 # NB: processes receive it as CHAIN_NAME — foundry binaries auto-load .env and bind a
 # CHAIN variable to their --chain flag, so the env name must not collide.
 
@@ -18,7 +18,7 @@ else
 RPC_FLAG = --rpc-url $(LOCAL_RPC)
 endif
 
-.PHONY: build test fmt fmt-check anvil deploy-local deploy-sepolia seed up down fund-check relayer-dev indexer-dev front-dev front-build
+.PHONY: build test fmt fmt-check anvil deploy-local deploy-sepolia seed fund-check relayer-dev indexer-dev front-dev front-build
 
 build:
 	cd contracts && forge build
@@ -47,17 +47,11 @@ deploy-sepolia:
 seed:
 	@$(ENV); cd contracts && forge script script/Seed.s.sol:Seed $(RPC_FLAG) --broadcast
 
-up:
-	@$(ENV); CHAIN_NAME=$(CHAIN) docker compose up -d --build
-
-down:
-	docker compose down
-
 # Relayer sETH balance alert (exit 1 when under MIN_RELAYER_BALANCE).
 fund-check:
 	@$(ENV); CHAIN_NAME=$(CHAIN) $(TSX) relayer/scripts/fund-check.ts
 
-# Convenience: relayer on the host with .env loaded (Docker-free dev loop).
+# Relayer on the host with .env loaded (CHAIN=local|sepolia).
 relayer-dev:
 	@$(ENV); CHAIN_NAME=$(CHAIN) $(TSX) watch relayer/src/index.ts
 

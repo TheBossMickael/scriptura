@@ -211,7 +211,7 @@ export function registerRoutes(app: FastifyInstance, ctx: RouteContext): void {
   }
 
   /**
-   * Liveness + fund status. Non-business endpoint (Docker healthcheck, ops): the single
+   * Liveness + fund status. Non-business endpoint (liveness probe, ops): the single
    * business endpoint remains POST /intent.
    */
   app.get("/health", async () => {

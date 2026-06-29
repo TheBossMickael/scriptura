@@ -56,12 +56,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(`Unsupported CHAIN_NAME "${chain}" — expected "local" or "sepolia"`);
   }
 
-  // RPC_URL always wins; otherwise local falls back to the Anvil default (or
-  // LOCAL_RPC_URL, which Docker Compose points at host.docker.internal) and sepolia
+  // RPC_URL always wins; otherwise local falls back to the Anvil default and sepolia
   // requires an explicit SEPOLIA_RPC_URL.
   const rpcUrl =
-    env.RPC_URL ??
-    (chain === "sepolia" ? env.SEPOLIA_RPC_URL : (env.LOCAL_RPC_URL ?? "http://127.0.0.1:8545"));
+    env.RPC_URL ?? (chain === "sepolia" ? env.SEPOLIA_RPC_URL : "http://127.0.0.1:8545");
   if (!rpcUrl) {
     throw new Error("SEPOLIA_RPC_URL (or RPC_URL) is required when CHAIN=sepolia");
   }
