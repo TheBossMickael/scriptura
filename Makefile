@@ -40,8 +40,9 @@ anvil:
 deploy-local:
 	@$(ENV); cd contracts && forge script script/Deploy.s.sol:Deploy --rpc-url $(LOCAL_RPC) --broadcast
 
+# One-shot testnet deploy + seed; --verify uses foundry.toml [etherscan] (ETHERSCAN_API_KEY).
 deploy-sepolia:
-	@$(ENV); cd contracts && forge script script/Deploy.s.sol:Deploy --rpc-url "$$SEPOLIA_RPC_URL" --broadcast
+	@$(ENV); cd contracts && forge script script/Deploy.s.sol:Deploy --rpc-url "$$SEPOLIA_RPC_URL" --broadcast --verify
 
 # Idempotent re-seed against deployments/<chain>.json (clients, DEP, sETH top-ups).
 seed:

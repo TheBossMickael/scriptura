@@ -16,3 +16,12 @@ depth = 64
 # Handlers are written to never revert (bounded amounts, pause guards): any revert in a
 # fuzzed sequence is a real bug, not noise to be skipped.
 fail_on_revert = true
+
+# Sepolia: `make deploy-sepolia` passes --rpc-url "$SEPOLIA_RPC_URL" directly, but the rpc
+# alias lets verify / manual `forge verify-contract --rpc-url sepolia` resolve it too. Both
+# values are interpolated from the (gitignored) .env at runtime — no secrets are committed.
+[rpc_endpoints]
+sepolia = "${SEPOLIA_RPC_URL}"
+
+[etherscan]
+sepolia = { key = "${ETHERSCAN_API_KEY}", chain = 11155111 }
