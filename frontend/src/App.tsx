@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Header } from "./components/Header";
 import { Card } from "./components/ui";
 import { JoinCard } from "./components/Join";
@@ -10,7 +10,7 @@ import { StableCoView } from "./views/StableCoView";
 import { CentralBankView } from "./views/CentralBankView";
 import { useRole } from "./hooks/useRole";
 import { useChainWatcher } from "./hooks/useChainWatcher";
-import { deploymentComplete, missingContracts } from "./lib/directory";
+import { chainName, deploymentComplete, missingContracts } from "./lib/directory";
 import type { RoleResolution } from "./lib/roles";
 import type { Address } from "viem";
 
@@ -18,10 +18,10 @@ function DeploymentIncomplete() {
   return (
     <Card title="Incomplete deployment">
       <p>
-        Missing addresses in <code>deployments/local.json</code>: {missingContracts.join(", ") || "—"}.
+        Missing addresses in <code>deployments/{chainName}.json</code>: {missingContracts.join(", ") || "—"}.
       </p>
       <p>
-        Run <code>make deploy-local</code> (with Anvil) first to generate a complete file, then restart the dev server.
+        Run <code>make deploy-{chainName}</code> first to generate a complete file, then restart the dev server.
       </p>
     </Card>
   );
@@ -87,7 +87,12 @@ export function App() {
             <p>Resolving role…</p>
           </Card>
         ) : (
-          renderSelectedView(view, resolution, address, isConnected)
+          // Key by view AND account: bank A → bank B reuses the same component type, and React
+          // would keep its local state (form inputs, TxStatus feedback) across the switch — a
+          // stale error from view A must not survive into view B, nor across wallet changes.
+          <Fragment key={`${view}:${address ?? "none"}`}>
+            {renderSelectedView(view, resolution, address, isConnected)}
+          </Fragment>
         )}
       </main>
     </div>

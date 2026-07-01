@@ -1,14 +1,16 @@
 import { getAddress, keccak256, toBytes, type Address } from "viem";
-import rawDeployment from "@deployments/local.json";
+import localDeployment from "@deployments/local.json";
+import sepoliaDeployment from "@deployments/sepolia.json";
 
 /**
  * Typed view of `deployments/<chain>.json` (the deploy output), plus role constants and the
- * actor directory the UI needs for role resolution and friendly labels. Anvil-first: we load
- * local.json; Sepolia wiring (selecting the file by chain) lands at the end of the phase.
+ * actor directory the UI needs for role resolution and friendly labels. The active chain is
+ * selected by VITE_CHAIN (local | sepolia, default local); both files are committed, so the
+ * static imports always resolve.
  *
- * The committed local.json may be stale (Phase 4 left it without stableCo/seur). A fresh
- * `make deploy-local` regenerates a complete file — `deploymentComplete` flags the gap so the
- * app can show a clear "run the deploy" screen instead of crashing on undefined addresses.
+ * A committed deployment file may be stale/incomplete (e.g. a pre-stablecoin local.json). A
+ * fresh `make deploy-<chain>` regenerates a complete file — `deploymentComplete` flags the gap
+ * so the app shows a clear "run the deploy" screen instead of crashing on undefined addresses.
  */
 export interface Deployment {
   chainId: number;
@@ -32,6 +34,12 @@ export interface Deployment {
   bob2: Address;
   relayer: Address;
 }
+
+/** The active chain name, selected by VITE_CHAIN (default local). */
+export const chainName = import.meta.env.VITE_CHAIN === "sepolia" ? "sepolia" : "local";
+
+/** The active chain's committed deployment. */
+const rawDeployment = chainName === "sepolia" ? sepoliaDeployment : localDeployment;
 
 export const deployment = rawDeployment as unknown as Deployment;
 

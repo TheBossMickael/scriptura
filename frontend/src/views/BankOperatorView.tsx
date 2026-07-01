@@ -12,6 +12,7 @@ import { useClients, usePayments } from "../hooks/usePonder";
 import { commercialBankAbi, depositTokenAbi } from "../lib/abis";
 import { BANKS, labelForAddress, type BankInfo, type BankKey } from "../lib/directory";
 import { looksLikeAddress, parseAmount } from "../lib/format";
+import { targetChain } from "../lib/wagmi";
 
 // Genesis convention (documented, non-tokenized): each bank's balance sheet carries 3,500,000
 // in "loans" so that assets (reserves + loans) == deposits at genesis. Not updated by credits.
@@ -117,6 +118,7 @@ function AddClientForm({ bank }: { bank: BankInfo }) {
         abi: commercialBankAbi,
         functionName: "registerClient",
         args: [client],
+        chainId: targetChain.id,
       });
       onHash(h1);
       await confirm(h1);
@@ -127,6 +129,7 @@ function AddClientForm({ bank }: { bank: BankInfo }) {
           abi: commercialBankAbi,
           functionName: "creditClient",
           args: [client, amount],
+          chainId: targetChain.id,
         });
         onHash(h2);
         await confirm(h2);

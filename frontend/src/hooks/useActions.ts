@@ -4,6 +4,7 @@ import type { Abi, Address, Hex } from "viem";
 import { usePending } from "../pending/PendingProvider";
 import { RelayerError, describeRelayerError, faucet, type RelayerSuccess } from "../lib/relayer";
 import type { BankKey } from "../lib/directory";
+import { targetChain } from "../lib/wagmi";
 
 const RECEIPT_TIMEOUT_MS = 120_000;
 
@@ -131,8 +132,11 @@ export function useTx() {
     direct: (label: string, call: ContractWrite) =>
       execute(label, async (onHash) => {
         await simulate(call);
+        // chainId asserts the wallet is on the deployment's chain (reads no longer follow the
+        // wallet since syncConnectedChain: false) — mismatch fails loudly instead of sending
+        // the tx to whatever network the wallet sits on.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic, runtime-built call
-        const hash = (await writeContractAsync({ ...call } as any)) as Hex;
+        const hash = (await writeContractAsync({ ...call, chainId: targetChain.id } as any)) as Hex;
         onHash(hash);
         await confirm(hash);
         return hash;
