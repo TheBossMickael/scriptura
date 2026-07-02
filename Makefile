@@ -1,4 +1,4 @@
-# Two-Tier Money Sandbox — Makefile
+# Two-Tier Money — Makefile
 # Recipes source .env themselves (set -a) so the per-role keys/addresses reach forge/npm.
 # CHAIN selects the target for seed/fund-check: local (default) | sepolia.
 # NB: processes receive it as CHAIN_NAME — foundry binaries auto-load .env and bind a
@@ -8,7 +8,7 @@ CHAIN ?= local
 LOCAL_RPC := http://127.0.0.1:8545
 ENV := set -a; [ -f .env ] && . ./.env; set +a
 # Call the local tsx binary directly: under MSYS2 `npm run`/`npx` spawn the script in
-# an env-stripped shim, so MNEMONIC & co. never reach it. The .bin shim resolves its
+# an env-stripped shim, so the per-role keys & co. never reach it. The .bin shim resolves its
 # own imports, so the working directory does not matter.
 TSX := relayer/node_modules/.bin/tsx
 

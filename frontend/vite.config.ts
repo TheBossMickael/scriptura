@@ -19,7 +19,7 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    // Allow importing the shared abis/ and deployments/ that live outside frontend/.
+    // Allow importing the committed deployments/ files that live outside frontend/.
     fs: { allow: [repoRoot] },
   },
   test: {

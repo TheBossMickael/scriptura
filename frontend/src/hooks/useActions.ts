@@ -23,7 +23,7 @@ export interface ContractWrite {
   args?: readonly unknown[];
 }
 
-// Contract custom errors -> friendly French. Surfaced by pre-simulation before sending.
+// Contract custom errors -> friendly messages. Surfaced by pre-simulation before sending.
 const KNOWN_ERRORS: Record<string, string> = {
   ClientHasBalance: "The client still holds a non-zero DEP balance — empty it before removing.",
   AlreadyClient: "This address is already a client.",
