@@ -86,7 +86,7 @@ back. Coverage sits at exactly 100% throughout.
 Events: `StableMinted` / `StableRedeemed` (+ the underlying `IntrabankTransfer`).
 Proof: `test_MintSameBank_BookTransferThenIssue`, `test_RedeemSameBank_BurnThenBookTransfer`.
 
-## S7 — Cross-bank mint: five accounting moves, one transaction
+## S7 — Cross-bank mint: four token movements, one transaction
 
 bob1 (Bank B) mints **100,000 sEUR**. His deposits cannot simply move to the vault (it
 banks at A), so the vault composes an interbank settlement in the same transaction:
@@ -95,8 +95,10 @@ banks at A), so the vault composes an interbank settlement in the same transacti
 2. wCBDC 100,000 moves B → A (Bank B 400,000 / Bank A 600,000) →
 3. mint 100,000 DEP-A to the vault →
 4. mint 100,000 sEUR to bob1
-   — with (0) the intent verification up front: five moves across all three monetary
-   layers, atomically. Coverage never dips below 100% (reserves arrive *before* issuance).
+
+Four token movements spanning all three monetary layers — M1 at both banks, M0, and the
+stablecoin — atomically. Coverage never dips below 100% (reserves arrive *before*
+issuance).
 
 Proof: `test_MintCrossBank_ComposesInterbankSettlement`.
 Live on Sepolia (10,000 sEUR minted cross-bank by a Bank B client):

@@ -90,7 +90,7 @@ it makes stress **gradual and observable** — three health states instead of a 
 
 The ratio mechanics are worth stating: an outflow reduces reserves and deposits by the
 same absolute amount, so the *ratio* falls (the numerator is the smaller side). From
-genesis, roughly **111,000 of net outflows** push a bank under the 10% threshold — small
+genesis, roughly **111,000 in net outflows** pushes a bank under the 10% threshold — small
 enough that a demo can trigger it, and small enough to show why runs are self-reinforcing:
 each withdrawal makes the published ratio worse, which is precisely the signal that
 convinces the next depositor to leave — the classic Diamond–Dybvig coordination problem.
@@ -126,9 +126,9 @@ Two design decisions follow from having reserves *on-chain*:
 
 When a **Bank B** client mints or redeems, the vault composes an interbank settlement in
 the same transaction (deposits cannot simply cross banks — the registries forbid it):
-redeem by Bob = burn sEUR → Bank A settles wCBDC to Bank B → Bob receives DEP-B. One
-intent, one transaction, five accounting movements across all three monetary layers —
-the richest flow in the system.
+redeem by Bob = burn sEUR → burn the vault's DEP-A → wCBDC moves A to B → Bob receives
+DEP-B. One intent, one transaction, four token movements across all three monetary
+layers — the richest flow in the system.
 
 ## 5. Intermediated vs permissionless money
 

@@ -162,7 +162,7 @@ own signatures — entirely gasless; sETH is only needed for the *direct* sEUR t
 - **Direct**: the holder calls `transfer()` from their own wallet (pre-simulated by the
   UI to surface any revert before the wallet popup). Requires sETH.
 
-Same money, two trust models — the desintermediation contrast is the point.
+Same money, two trust models — the disintermediation contrast is the point.
 
 ## 4. The relayer
 
@@ -286,8 +286,8 @@ incremental notes live in this file's git history.
 | 4.5 — Option B | 06-26 | `onboard()` behind a narrow `FAUCET_ROLE` granted to the relayer's own EOA; on-chain cap + one-shot per address; `POST /faucet`. 155 tests. |
 | 5 — Frontend + indexer | 06-27/28 | Five role views + read-only explorer; blocking UX with in-section `TxStatus`; pre-simulated writes; event-driven refresh; Ponder indexer + custom REST API. 25+25 vitest. |
 | 6a — Sepolia live | 07-01/02 | Docker dropped (Makefile host targets only); one-shot deploy + inline Etherscan verify of all 9 instances; front chain-select (`VITE_CHAIN`) + chain-pinned reads; indexer RPC failover pool. **Full E2E user simulation green on live Sepolia**: onboarding, intrabank/interbank payments, same- and cross-bank mint/redeem, gasless 3009 transfer, replay idempotence, stale-nonce 409 — all seven invariants re-verified on-chain to the cent. |
-| 6b — Docs & release | 07 | English documentation set, README, MIT license, `v1.0.0` tag — no code changes. |
+| 6b — Docs & release | 07 | English documentation set, README + screenshots, MIT license; Makefile service targets renamed (`-dev` dropped) and stale comments scrubbed — no functional changes; `v1.0.0` tag. |
 
-Final test surface: **155 Foundry tests** (132 unit, 17 integration, 6 invariant suites at
-128 runs × depth 64 with zero tolerated reverts) + **25 relayer** and **25 frontend**
+Final test surface: **155 Foundry tests** (132 unit, 17 integration, 6 invariant properties
+at 128 runs × depth 64 with zero tolerated reverts) + **25 relayer** and **25 frontend**
 vitest suites, `tsc --noEmit` clean across all three TypeScript projects.

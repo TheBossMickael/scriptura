@@ -88,7 +88,7 @@ a client of Bank A (a contract can be a client).
 | 1 | Intrabank payment | Client | Intent → relayer → engine (book transfer) |
 | 2 | Interbank payment | Client | Intent → relayer → engine (atomic settlement) |
 | 3 | Mint sEUR (Bank A client) | Client | Intent → relayer → StableCo (book transfer + issue) |
-| 4 | Mint sEUR (Bank B client) | Client | Intent → StableCo ∘ engine (composed settlement) |
+| 4 | Mint sEUR (Bank B client) | Client | Intent → relayer → StableCo → engine (composed settlement) |
 | 5 | Redeem sEUR (both cases) | Client | Mirror of 3/4 |
 | 6 | sEUR P2P | Client | EIP-3009 gasless via relayer, or direct `transfer()` |
 | 7 | Public onboarding (Option B) | Visitor | `POST /faucet` → relayer's `FAUCET_ROLE` → `onboard()` (register + capped credit, one-shot) |
@@ -134,7 +134,7 @@ Full mapping to code and tests: [contracts.md](contracts.md).
 | Indexer | **Ponder** + custom REST API | History without rescanning; a derived, rebuildable store |
 | Persistence | **None.** Chain = source of truth; relayer stateless | Everything re-derivable from chain + config |
 | Auth | The wallet. SIWE deliberately deferred to V2 (scenario-control endpoints) | V1's single business endpoint is self-authenticating |
-| Orchestration | **Makefile host targets** — three terminals (`make relayer`, `make indexer`, `make front`) | Docker was dropped (2026-06-29): unvalidated images and broken local tooling beat no value into the demo |
+| Orchestration | **Makefile host targets** — three terminals (`make relayer`, `make indexer`, `make front`) | Docker was dropped (2026-06-29): unvalidated images and broken local tooling added no value to the demo |
 | Verification | Inline `--verify` during `make deploy-sepolia` | All 9 instances readable on Etherscan during demos |
 
 **Lifecycle / restarts.** Everything vital is on-chain (balances, registries, nonces,
