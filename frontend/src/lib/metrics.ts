@@ -1,6 +1,6 @@
 /**
  * Pure metric helpers derived from on-chain reads (testable, no I/O). Health states follow
- * docs/projet.md §5.5; ILLIQUID is surfaced statically when reserves are exhausted, and
+ * docs/project.md (key mechanisms); ILLIQUID is surfaced statically when reserves are exhausted, and
  * reactively when an interbank settlement reverts with InsufficientReserves.
  */
 

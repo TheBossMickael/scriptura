@@ -1,5 +1,4 @@
 .env
-# Private assistant instructions — kept local, not published (already in past history; that's fine).
 CLAUDE.md
 node_modules/
 contracts/cache/
@@ -8,7 +7,7 @@ contracts/broadcast/
 relayer/dist/
 # tsx caches into os.tmpdir(), which Node-Windows resolves to a literal "undefined\temp"
 # when TEMP/TMP/SystemRoot are stripped from the make recipe shell (MSYS). Lands at the
-# repo root (make relayer-dev runs from root) or under relayer/. Harmless cache, never commit.
+# repo root (make relayer runs from root) or under relayer/. Harmless cache, never commit.
 undefined/
 frontend/dist/
 # Ponder indexer runtime artifacts (derived DB + cache; rebuildable from chain).

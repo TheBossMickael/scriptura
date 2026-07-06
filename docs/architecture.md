@@ -1,445 +1,293 @@
-# Architecture — notes de phases
+# Architecture
 
-> Notes incrémentales : chaque phase terminée ajoute ici une courte section décrivant ce qui
-> a été construit et les choix libres effectués. Passe finale de rédaction en Phase 6.
-
----
-
-## Phase 1 — Couche M0 : wCBDC + CentralBank (2026-06-10)
-
-### Construit
-
-- **`contracts/src/WCBDC.sol`** — ERC-20 restreint (6 décimales) : hook `_update` qui n'autorise
-  un mint que vers un détenteur allowlisté et un transfert que si `from` ET `to` sont
-  allowlistés ; rôles `MINTER_ROLE`/`BURNER_ROLE` (CentralBank) et `SETTLER_ROLE` (réservé au
-  SettlementEngine, accordé en Phase 2) ; `settle(from, to, amount)` déplace des réserves entre
-  banques sans approve.
-- **`contracts/src/CentralBank.sol`** — déploie le wCBDC et en détient seul l'admin ; registre
-  des banques (`registerBank`/`removeBank` → allowlist du token), émission M0
-  (`mintCBDC`/`burnCBDC`), paramètre réglementaire `reserveRatioThresholdBps` (init 1 000 =
-  10 %). `OPERATOR_ROLE` → EOA centralBankOperator (deployer).
-- **`contracts/script/Deploy.s.sol`** — squelette de genèse : dérive le deployer du mnémonique
-  HD (index 0), déploie CentralBank, écrit `deployments/<chain>.json` (adresses +
-  `START_BLOCK`, piège #6 anticipé). TODO explicites pour les Phases 2–4.
-- **Tests** : `test/unit/WCBDC.t.sol` (18) + `test/unit/CentralBank.t.sol` (15) — restrictions
-  de transfert, rôles, events, bornes, mini-scénario de genèse (`totalSupply == 1_000_000e6`).
-- **Outillage** : `contracts/foundry.toml` (solc 0.8.24, fs_permissions vers `../deployments`),
-  OpenZeppelin v5.6.1 + forge-std v1.16.1, `Makefile` minimal (`build`, `test`, `fmt`,
-  `fmt-check` — complété en Phase 3).
-
-### Choix libres (consignés)
-
-1. **Allowlist stockée dans WCBDC** (et non dans CentralBank) : la règle de transfert est
-   auto-contenue dans le token ; CentralBank reste l'unique administrateur via
-   `DEFAULT_ADMIN_ROLE`.
-2. **WCBDC déployé par le constructeur de CentralBank** : câblage atomique, aucune fenêtre où
-   un tiers détiendrait les pouvoirs admin du token.
-3. **Seuil de ratio en basis points** (`1_000` = 10 %), borné à 10 000 ; consommé en Phase 2
-   (contrainte soft uniquement, piège #4).
-4. **Burn possible après retrait de l'allowlist** : la banque centrale peut toujours apurer les
-   réserves d'une banque retirée du système (gardé par `BURNER_ROLE`, donc CentralBank seul).
-5. **Genèse recalibrée validée par l'utilisateur (2026-06-10)** : wCBDC total 1 000 000
-   (500 000/banque), DEP 2 400 000/1 600 000 par client (4 000 000/banque), ratio initial
-   12,5 %, seuil 10 %, ligne « prêts » 3 500 000/banque. CLAUDE.md et docs/projet.md mis à
-   jour en conséquence (remplace 3 000 / 15 % / 8 500).
-
-### Vérification
-
-`forge build` propre, `forge test` **33/33 verts**, `forge fmt --check` propre, dry-run de
-`Deploy.s.sol` sur EVM locale OK (écrit `deployments/local.json`). Suite d'invariants : à
-bootstrapper en Phase 2 (conformément au phasage CLAUDE.md).
+> How Two-Tier Money is built: the on-chain contracts, the three off-chain services, the
+> flows that tie them together, and the operational choices (keys, chains, RPC). For the
+> monetary rationale see [monetary-design.md](monetary-design.md); for per-contract
+> reference see [contracts.md](contracts.md); deep dives:
+> [frontend.md](frontend.md), [indexer.md](indexer.md), [threat-model.md](threat-model.md).
 
 ---
 
-## Phase 2 — Couche M1 + règlement : banques, DEP, SettlementEngine (2026-06-12)
+## 1. System overview
 
-### Construit
+```
+              MetaMask (client keys: EIP-712/3009 signing · operator direct txs)
+                                       │
+                       ┌───────────────┴────────────────┐
+                       │  Frontend — Vite + React/wagmi │  :5173
+                       │  5 role views · read-only mode │
+                       └──┬────────────┬────────────┬───┘
+             POST /intent │            │ GET /…     │ live reads (viem)
+             POST /faucet │            │            │
+                ┌─────────▼──────┐  ┌──▼──────────┐ │
+                │ Relayer        │  │ Indexer     │ │
+                │ Fastify + viem │  │ Ponder+Hono │ │
+                │ :3001 stateless│  │ :42069      │ │
+                └─────────┬──────┘  └──▲──────────┘ │
+                    txs   │            │ eth_getLogs│
+                          ▼            │            ▼
+       ┌───────────────────────────────┴──────────────────────────┐
+       │        Chain (Anvil dev / Sepolia live) — source of truth │
+       │   CentralBank──wCBDC    Bank A──DEP-A    Bank B──DEP-B    │
+       │   SettlementEngine      StableCo──sEUR                    │
+       └───────────────────────────────────────────────────────────┘
+```
 
-- **`contracts/src/DepositToken.sol`** (déployé ×2 : DEP-A, DEP-B) — ERC-20 restreint
-  (6 décimales) + `ERC20Pausable` : hook `_update` qui exige un client enregistré comme
-  destinataire d'un mint et les deux extrémités clientes pour un transfert (burns gardés
-  par rôle uniquement) ; rôles `MINTER/BURNER/SETTLER_ROLE` (engine) et `PAUSER_ROLE`
-  (banque) ; `settle(from, to, amount)` déplace des dépôts entre clients sans allowance
-  (miroir de `WCBDC.settle`). Interface `IClientRegistry` locale pour éviter l'import
-  circulaire avec la banque.
-- **`contracts/src/CommercialBank.sol`** (déployé ×2 : A, B) — déploie son DepositToken au
-  constructeur (câblage atomique, pattern Phase 1) ; registre clients
-  (`registerClient`/`removeClient`) ; `creditClient` (mint de dépôts, genèse/« les crédits
-  font les dépôts ») ; `freeze()/unfreeze()` → pause du token ; `setSettlementEngine`
-  (accorde/révoque les 3 rôles engine sur le token) ; vues `reserves()` et
-  `reserveRatioBps()` ; `checkReserveRatio()` (cf. choix 3).
-- **`contracts/src/SettlementEngine.sol`** — chemin direct `settle(fromBank, toBank, to,
-  amount)` avec `from = msg.sender` ; cœur `_settle` : validations (banques enregistrées
-  via CentralBank, clients des deux côtés, montant non nul), intrabank = transfert
-  comptable (pas de wCBDC), interbank = burn DEP → `wcbdc.settle` → mint DEP atomiques
-  avec pré-check `InsufficientReserves` explicite ; events `Settled` /
-  `IntrabankTransfer` ; post-check soft du ratio de la banque payeuse.
-- **`contracts/src/CentralBank.sol`** (étendu) — `setSettlementEngine` : accorde/révoque
-  `SETTLER_ROLE` sur le wCBDC (le branchement anticipé en Phase 1).
-- **`contracts/script/Deploy.s.sol`** (étendu) — déploie banques + engine, registre les
-  banques, mint la genèse M0 (500 000/banque), câble l'engine (chaque opérateur de banque
-  signe son propre `setSettlementEngine`) ; écrit les 7 adresses + `START_BLOCK` dans
-  `deployments/<chain>.json`. Seed clients/DEP : Phase 3 (TODO conservé).
-- **Tests** : `test/unit/DepositToken.t.sol` (16), `test/unit/CommercialBank.t.sol` (25),
-  `test/unit/SettlementEngine.t.sol` (13), `test/integration/Settlement.t.sol` (8 : genèse,
-  intrabank, interbank, breach-et-paie-quand-même, illiquidité-mais-intrabank-OK, freeze
-  bidirectionnel, unfreeze, aller-retour conservatif).
-- **Suite d'invariants bootstrappée** : `test/invariant/Invariants.t.sol` + handler borné
-  (`payIntrabank`, `payInterbank`, `toggleFreeze` ; jamais de revert, `fail_on_revert =
-  true` dans `foundry.toml`). Cinq propriétés : M0 constant (INV 1), seules les banques
-  détiennent le wCBDC (INV 4), M1 agrégé constant (INV 7, cf. choix 8), seuls les clients
-  détiennent les DEP (INV 5), couplage règlement « dépôts − réserves == prêts de genèse »
-  (forme agrégée de l'INV 2).
+Three long-running services (three terminals: `make relayer / indexer / front`)
+around one chain. **There is no database anywhere**: the relayer is stateless and re-derives
+everything at boot from the chain and `deployments/<chain>.json`; the indexer's store is a
+*derived, rebuildable* projection of event logs; the frontend keeps state in the wallet,
+chain reads and React state only (no localStorage).
 
-### Choix consignés (1–3 = décisions utilisateur du 2026-06-12)
+## 2. On-chain layer
 
-1. **Intrabank = vrai transfert** via `DepositToken.settle` gardé par `SETTLER_ROLE` —
-   étend la matrice des rôles de projet.md §4 (engine = MINTER+BURNER+SETTLER sur les
-   DEP). Pas de burn+mint : la supply DEP ne bouge jamais sur un paiement interne, et la
-   trace d'events reste lisible (un seul `Transfer`).
-2. **Chemin direct = échafaudage Phase 2, à RETIRER en Phase 3** quand `executeIntent()`
-   arrivera (NatSpec explicite sur la fonction). La règle de routage réserve le double
-   chemin au sEUR seul ; le scénario censure-du-relayer (V2) exige des DEP exclusivement
-   intermédiés. `_settle` interne sera réutilisé tel quel par le chemin intent.
-3. **Règle ratio-breach généralisée** : toute opération dégradant le ratio émet
-   `ReserveRatioBreached` si elle le fait passer (ou maintient) sous le seuil — règlement
-   interbancaire sortant ET `creditClient`. Logique factorisée dans
-   `CommercialBank.checkReserveRatio()`, **permissionless** (pur constat d'état public,
-   cohérent avec le paradoxe de transparence) ; l'event est donc émis par la banque, pas
-   par l'engine. Toujours soft (piège #4) : rien n'est jamais bloqué par le ratio.
-4. **`removeClient` revert si solde non nul** (`ClientHasBalance`) : un ex-client avec des
-   DEP violerait l'INVARIANT 5 (solde échoué, intransférable).
-5. **Pré-check `InsufficientReserves(bank, required, available)` explicite** dans l'engine
-   avant le règlement interbancaire : le `wcbdc.settle` revertirait de toute façon, mais
-   l'erreur nommée matérialise l'état ILLIQUIDE pour le front et les tests.
-6. **`creditClient` = pouvoir de mint opérateur délibérément illimité** : réaliste
-   (création monétaire par le crédit), chemin de genèse en V1, hook de la V3.
-7. **Pas de bypass « caller == engine » dans le hook `_update`** : toutes les opérations
-   légales de l'engine ciblent des clients par construction, donc la restriction de
-   détention est appliquée inconditionnellement — plus strict que la formulation
-   CLAUDE.md, même résultat.
-8. **`invariant_M1AggregateConstant` est un invariant de la suite de tests, pas du
-   système** : il ne tient que parce que le handler n'appelle jamais `creditClient`. Le
-   système autorise délibérément la croissance de M1 par le crédit opérateur ; la V3
-   reprendra ce fil (la ligne « prêts » deviendra réelle).
+### 2.1 Contracts — 7 source files, 9 deployed instances
 
-### Vérification
+| Contract | Instances | Responsibility |
+|---|---|---|
+| `CentralBank` | 1 | Owns all wCBDC admin: bank allowlist, M0 issuance (genesis only in V1), regulatory ratio threshold (10%), engine wiring |
+| `WCBDC` | 1 | Restricted ERC-20 (M0): only allowlisted banks hold it; `settle()` moves reserves without allowance (engine's `SETTLER_ROLE`) |
+| `CommercialBank` | 2 (A, B) | Holds wCBDC reserves (`reserves() == wcbdc.balanceOf(this)`), client registry, `freeze()/unfreeze()`, faucet onboarding, owns its DepositToken |
+| `DepositToken` | 2 (DEP-A, DEP-B) | Restricted ERC-20 (M1): `_update` hook requires registered clients at both ends; Pausable by its bank |
+| `SettlementEngine` | 1 | The core: verifies EIP-712 `PaymentIntent`s and executes intrabank book transfers or atomic interbank settlement; restricted composition entry points for StableCo |
+| `StableCo` | 1 | Reserve vault: verifies `MintIntent`/`RedeemIntent`, composes settlement + sEUR mint/burn atomically; client of Bank A; operator can only pause |
+| `StableEUR` | 1 | Permissionless ERC-20 (sEUR) + full EIP-3009 (`transferWithAuthorization` / `receiveWithAuthorization` / `cancelAuthorization`) |
 
-`forge build` propre, `forge test` **100/100 verts** (87 unitaires + 8 intégration +
-5 invariants à 128 runs × 64 de profondeur, 0 revert), `forge fmt --check` propre,
-dry-run de `Deploy.s.sol` sur EVM locale OK (écrit les 7 adresses + `START_BLOCK` dans
-`deployments/local.json`).
+All tokens use 6 decimals. Contract addresses are never hardcoded: everything reads
+`deployments/<chain>.json`, written by the deploy script.
 
----
+### 2.2 Atomic wiring pattern
 
-## Phase 3 — Intents EIP-712 + relayer + infra (2026-06-13)
+Every institution deploys its own token **in its constructor**: `CentralBank` deploys
+wCBDC, each `CommercialBank` deploys its DepositToken, `StableCo` deploys sEUR. The token
+is born with its institution as sole admin — there is no configuration window in which a
+third party could hold (or grab) token powers. Engine privileges are granted afterwards by
+each institution's operator (`setSettlementEngine`, `setStableCo`), and are **re-settable**
+(grant to the new engine, revoke from the previous one) so a redeployed component can be
+re-pointed without redeploying the rest.
 
-### Construit
+### 2.3 Role matrix
 
-- **`contracts/src/SettlementEngine.sol`** (refondu) — hérite d'OZ `EIP712` et `Nonces` ;
-  `struct PaymentIntent{from, fromBank, toBank, to, amount, nonce, deadline}` +
-  `PAYMENT_INTENT_TYPEHASH` ; **`executeIntent(intent, signature)`** : deadline (inclusive)
-  → `ECDSA.recover` (revert `InvalidIntentSigner`) → `_useCheckedNonce` (anti-replay,
-  INVARIANT 6) → `_settle` (cœur Phase 2 inchangé) → event `IntentExecuted(digest, from,
-  nonce)`. `hashIntent(intent)` vue (parité de digest relayer/front/tests + clé
-  d'idempotence). **Chemin direct `settle()` retiré** (échafaudage Phase 2). L'engine est
-  **relay-agnostique** : n'importe qui peut soumettre un intent signé.
-- **Tests contrats** — `SettlementEngine.t.sol` refondu autour des intents (25, dont
-  deadline/wrong-signer/tampered/replay/nonce-gap/any-relayer/frozen-bank/`IntentExecuted`/
-  digest EIP-712 recalculé) ; `Settlement.t.sol` (8) et le handler d'invariants convertis
-  aux intents signés (soumetteur ≠ payeur, le payeur signe via `vm.sign`). Suite à
-  **112 verts**, invariants toujours à 0 revert.
-- **Genèse complète** — `GenesisSeed.s.sol` (base abstraite, logique idempotente :
-  register/credit clients + funding sETH par top-up), `Deploy.s.sol` (seed complet + JSON
-  enrichi : 7 contrats + annuaire des 8 acteurs + relayer + `chainId` + `START_BLOCK`),
-  `Seed.s.sol` (re-seed seul, idempotent).
-- **Relayer** (`relayer/`, Node 20 + TS + Fastify + zod + viem) — `POST /intent`
-  (validation zod ; body `{type:"payment", intent, signature}`, le discriminateur `type`
-  anticipe les messages sEUR de la Phase 4 ; pré-checks signature/deadline/nonce +
-  `simulateContract` décodant les custom errors ; envoi sérialisé ; cache d'idempotence
-  mémoire ; watcher de receipt `submitted→confirmed|failed`) ; `GET /health` ; boot
-  (sanity chainId + adresse relayer, resync du nonce pending — piège #5) ; `fundCheck` ;
-  smoke `send-intent.ts` + vitest (16).
-- **Infra** — Makefile complété (`anvil`, `deploy-local/-sepolia`, `seed`, `up/down`,
-  `fund-check`, `relayer-dev`), `docker-compose.yml` (service relayer seul ; front en
-  Phase 5), `Dockerfile`, `.env.example`, `.gitignore`.
+| Holder | Role | On | Grants the power to |
+|---|---|---|---|
+| CentralBank (contract) | `DEFAULT_ADMIN` + `MINTER/BURNER` | wCBDC | Allowlist banks, issue/destroy M0 |
+| SettlementEngine | `SETTLER_ROLE` | wCBDC | Move reserves between banks (no allowance) |
+| SettlementEngine | `MINTER/BURNER/SETTLER_ROLE` | DEP-A, DEP-B | Execute the settlement legs |
+| Each CommercialBank (contract) | `DEFAULT_ADMIN` + `MINTER` + `PAUSER` | its DepositToken | Genesis credit, freeze/unfreeze |
+| StableCo (contract) | `DEFAULT_ADMIN` + `MINTER/BURNER` | sEUR | Endogenous issuance — **no EOA can ever mint sEUR** |
+| Operator EOAs | `OPERATOR_ROLE` | their institution | Institutional actions (register clients, freeze, thresholds, pause) |
+| Relayer EOA | `FAUCET_ROLE` | both banks | `onboard()` only: register + credit ≤ `MAX_FAUCET_CREDIT`, one-shot per address — never freeze or rewire |
 
-### Choix consignés
+Note the shape: **contracts hold the token powers, EOAs hold powers over contracts.**
+"The EOA decides, the contract enforces, the token accounts."
 
-1. **EOA relayer = clé dédiée isolée** (et non un acteur de la liste verrouillée). À l'origine
-   HD index 8 ; **abandonné le 2026-06-13 au profit de clés individuelles** (cf. choix 6).
-2. **`settle()` retiré, engine relay-agnostique** : la censure du relayer est *opérationnelle*,
-   pas *contractuelle* (un client peut s'auto-relayer en payant son gas). **Garde-fou
-   Phase 4** : `StableCo` (un contrat) ne peut pas signer ECDSA → la composition cross-bank
-   ajoutera son propre point d'entrée restreint sur `_settle` (rien à scaffolder maintenant).
-3. **Event `IntentExecuted(digest, from, nonce)`** : corrélation signé→soumis→confirmé pour
-   le relayer et le front (Phase 5).
-4. **Relayer : Fastify + zod ; réponse à la soumission (pas au receipt)** — le front suivra
-   « confirmé » via la chaîne (projet.md §7) ; watcher de receipt fire-and-forget qui met à
-   jour le cache d'idempotence ; file d'envoi sérialisée + `nonceManager` viem.
-5. **`Seed.s.sol` idempotent séparé** ; `deployments/<chain>.json` enrichi (acteurs, relayer,
-   chainId).
-6. **Pas de phrase mnémonique — clés privées individuelles + adresses clients** (décision
-   utilisateur 2026-06-13, appliquée même en local). Le `.env` porte les `*_PK` des rôles
-   *signataires serveur* (deployer/BC, opérateurs A/B) et les `*_ADDRESS` de tout le reste ;
-   le relayer ne détient que `RELAYER_PK` (EOA gas-only) et n'a aucun moyen de dériver les
-   clés des clients — frontière cryptographique cohérente avec « l'EOA décide ». `make anvil`
-   utilise la mnémonique Anvil par défaut (ses comptes connus = les clés publiques du `.env`).
-   Les clés *clients* ne vivent jamais dans le backend : MetaMask en Phase 5, et la seule
-   exception est `ALICE1_PK` du smoke test (clé Anvil publique, dev only).
+### 2.4 Transaction routing rule
 
-### TODO doc (Phase 6 — `threat-model.md`)
+> **Client-initiated monetary flow → signed EIP-712 intent, relayed gasless.
+> Institutional/admin action → direct transaction from the operator's wallet.**
 
-- **Relay-agnostique** : censure du relayer = opérationnelle, pas contractuelle ;
-  auto-relais possible (un client soumet lui-même son intent signé en payant son gas).
-- **Épuisement du sETH du relayer** : un client malveillant peut drainer le gas du relayer
-  par spam de micro-intents *valides* (qui passent tous les pré-checks). Non traité en V1
-  (4 clients connus), mais à nommer comme surface d'attaque.
-- **Gestion des secrets** : motiver l'abandon de la mnémonique (secret racine maximal +
-  capacité d'usurpation des clients) ; sur Sepolia, keystore Foundry chiffré pour les clés
-  de déploiement, `RELAYER_PK` isolé (service long-running, EOA jetable).
+Client payments enter the engine *exclusively* via `executeIntent` (the Phase 2 direct
+path was removed). The engine is **relay-agnostic**: anyone holding a valid signature may
+submit it, so relayer censorship is operational, never contractual — a client can always
+self-relay by paying their own gas. The single exception is sEUR P2P, which deliberately
+supports both a gasless EIP-3009 path and a plain `transfer()` (holder pays gas).
 
-### Pistes actées (phases ultérieures, hors Phase 3)
+### 2.5 Three nonce namespaces (never unified)
 
-- **Indexeur Ponder** (Phase 5, avec le front) pour les métriques agrégées plutôt qu'un scan
-  depuis `START_BLOCK` à chaque chargement — DB *dérivée*, n'enfreint pas « pas de DB ».
-- **Hébergement** front + relayer (Phase 6) pour des paiements gasless 24/7 et une démo en URL.
-- **Standards de token institutionnels** : ERC-1404 (Simple Restricted Token) et ERC-3643
-  (T-REX + ONCHAINID) — **documentés seulement** pour l'instant (choix utilisateur
-  2026-06-13) ; pas de refactor des tokens (toucherait des contrats testés + les invariants).
+| Namespace | Contract | Scheme | Protects |
+|---|---|---|---|
+| Payment intents | SettlementEngine | Sequential per payer (OZ `Nonces`) | `executeIntent` replay/ordering |
+| Mint/redeem intents | StableCo | Sequential per client (own counter) | `mintFromIntent` / `redeemFromIntent` |
+| sEUR authorizations | StableEUR | Random 32-byte + used-nonce map | EIP-3009 transfers (spec-required randomness) |
 
-### Limite connue (à gérer côté front en Phase 5)
+Sequential nonces impose "one in-flight action per client" (the UI enforces this);
+EIP-3009 requires random nonces for standard compliance. Keeping them separate is a
+deliberate, documented decision.
 
-Le pré-check de nonce du relayer est **séquentiel et synchrone** : un second intent du
-**même** client est rejeté en `409 nonce_mismatch` tant que le premier n'est pas miné
-(`nonces(from)` n'a pas encore avancé). Pas de paiements en rafale du même payeur. Pour la
-démo (4 clients) c'est sans impact ; **le front (Phase 5) doit désactiver le bouton
-« payer » jusqu'à confirmation** du paiement précédent du client (cohérent avec le suivi
-signé→soumis→confirmé). Une vraie file de nonces côté relayer est une option V2 si besoin.
+## 3. Key flows
 
-### Vérification
+### 3.1 Interbank payment (the core flow)
 
-`forge build` propre, `forge test` **112/112 verts** (95 unitaires + 8 intégration +
-5 invariants à 128 runs × 64, 0 revert), `forge fmt --check` propre, relayer `typecheck`
-+ `vitest` (16) verts. **E2E local** : `make anvil` → `make deploy-local` (genèse cohérente,
-JSON enrichi) → relayer (`/health` vert, boot-check `RELAYER_PK` ↔ déploiement) → smoke
-`send-intent` (intent alice1→bob1 signé, posté, miné, `nonces(alice1)==1`, réserves
-500 000→499 000 / 501 000, **idempotence OK**) ; rejets vérifiés : signature malformée 400,
-schéma 400, nonce périmé 409 ; `make seed` ré-exécuté = « No transactions to broadcast ».
+1. **Sign** — the frontend reads `engine.nonces(payer)` fresh, builds
+   `PaymentIntent{from, fromBank, toBank, to, amount, nonce, deadline = now+1h}` and has
+   MetaMask sign the EIP-712 digest (domain `SettlementEngine/1`).
+2. **Relay** — `POST /intent {type: "payment", intent, signature}`. The relayer runs its
+   pre-check pipeline (§4) and submits `executeIntent` from its own gas-paying EOA,
+   answering `{digest, txHash, status: "submitted"}`.
+3. **Execute (one transaction)** — the engine checks deadline → recovers the signer →
+   consumes the sequential nonce → `_settle`: both banks registered, both parties clients;
+   same bank ⇒ book transfer (`IntrabankTransfer`); different banks ⇒ explicit
+   `InsufficientReserves` pre-check (the ILLIQUID state), then **burn DEP(payer) → move
+   wCBDC(bank→bank) → mint DEP(payee)**, `Settled`, and the paying bank's permissionless
+   `checkReserveRatio()` (may emit `ReserveRatioBreached` — soft, never blocking).
+4. **Confirm** — the frontend awaits the receipt (checking `status`, 120 s timeout), shows
+   the hash/Etherscan link in-section, and invalidates every read. The indexer picks the
+   events up within its polling window.
 
----
+### 3.2 Cross-bank sEUR mint/redeem (the composed flow)
 
-## Phase 4 — Stablecoin : StableCo + StableEUR (sEUR), mint/redeem same+cross-bank (2026-06-26)
+A Bank B client minting sEUR cannot simply send DEP-B to StableCo (registries forbid
+cross-bank holding). Instead, one transaction composes all three monetary layers:
 
-### Construit
+```
+StableCo.mintFromIntent(intent, sig)          [verifies sig + own sequential nonce]
+  └─ engine.settleToStable(bob, bankB, amt)   [restricted: msg.sender == stableCo]
+       └─ _settle(bob, B → A, stableCo, amt)  [burn DEP-B → wCBDC B→A → mint DEP-A]
+  └─ seur.mint(bob, amt)                      [reserves arrived first: coverage-safe]
+```
 
-- **`contracts/src/StableEUR.sol`** — stablecoin `sEUR` ERC-20 **permissionless** (6 décimales,
-  aucune allowlist : il circule toujours, même StableCo en pause) + **EIP-3009 standard
-  complet** (`transferWithAuthorization`, `receiveWithAuthorization`, `cancelAuthorization`,
-  `authorizationState`) à **nonces aléatoires 32 bytes** et fenêtre `validAfter`/`validBefore`
-  stricte. `MINTER/BURNER_ROLE` accordés au **seul StableCo** ; **aucun minter EOA** (piège #2,
-  supply endogène). Domaine `EIP712("Stable EUR","1")`.
-- **`contracts/src/StableCo.sol`** — vault : déploie son `sEUR` au constructeur (câblage
-  atomique, pattern CentralBank→WCBDC / CommercialBank→DepositToken → seul admin/minter/burner),
-  détient les réserves DEP-A, mint/redeem 1:1. `mintFromIntent`/`redeemFromIntent` vérifient un
-  intent EIP-712 signé par le client (deadline, signataire, **nonce séquentiel** OZ `Nonces`)
-  puis composent **atomiquement** règlement + mint/burn sEUR. **Aucun branchement same/cross** :
-  la banque du client est passée à l'engine qui route. **Ordre préservant la couverture**
-  (INVARIANT 3 à chaque étape) : mint = règlement *puis* `seur.mint` ; redeem = `seur.burn`
-  *puis* règlement. Opérateur = `pause()`/`unpause()` uniquement. Vues `reserves()`,
-  `coverageRatioBps()`.
-- **`contracts/src/SettlementEngine.sol`** (étendu) — deux entrées **restreintes à l'adresse
-  StableCo** par-dessus `_settle` inchangé : `settleToStable` (flux mint, `to` forcé à StableCo)
-  et `settleFromStable` (flux redeem, `from` forcé). `setStableCo` gardé par le rôle opérateur
-  de la **CentralBank lu on-chain** (pas de nouveau rôle sur l'engine), **re-settable** (miroir
-  de `setSettlementEngine`) ; il met en cache `stableCo` **et** `stableCoBank` (lu via
-  `StableCo.bankA()`) pour ne jamais faire confiance à un argument de banque. Ces entrées ne
-  consomment **aucun nonce engine** mais émettent `Settled`/`IntrabankTransfer` (events riches
-  conservés : le front voit le règlement ET le mint).
-- **Scripts** — `GenesisSeed` charge `STABLECO_OPERATOR_PK` (l'opérateur devient rôle signataire
-  serveur) ; `Deploy` déploie StableCo (broadcast par son opérateur, qui déploie sEUR), câble
-  `engine.setStableCo`, enregistre StableCo comme **client de la Banque A**, écrit `stableCo`/`seur`
-  dans `deployments/<chain>.json` (StableCo démarre à 0, premier mint en live) ; `Seed`
-  enregistre StableCo client de A de façon idempotente. `.env.example` : `STABLECO_OPERATOR_PK`
-  remplace `STABLECO_OPERATOR_ADDRESS`.
-- **Relayer** — union discriminée `POST /intent` étendue à `mint`, `redeem`, `transfer3009`
-  (le discriminateur `type` anticipé en Phase 3). Pipeline factorisé (`handleSequentialIntent`
-  pour payment/mint/redeem : signature locale → deadline → nonce séquentiel → simulate → envoi
-  sérialisé) ; `transfer3009` a son propre pré-check (fenêtre + `authorizationState`, pas de
-  nonce séquentiel). ABIs `stableCoAbi`/`seurAbi`, domaines/digests `stableCoDomain`/`seurDomain`,
-  `mintDigest`/`redeemDigest`/`authorizationDigest` ; `config` lit `stableCo`/`seur`. Smoke
-  `send-intent` étendu (mint same-bank + transfer3009 gasless).
-- **Tests** — `test/unit/StableEUR.t.sol` (13), `test/unit/StableCo.t.sol` (12),
-  `test/integration/Stablecoin.t.sol` (9 : mint/redeem same+cross-bank, illiquidité au redeem
-  cross-bank, couverture sur flux mixte, freeze de A bloquant mint/redeem pendant que sEUR
-  circule, les **deux chemins P2P**) ; `SettlementEngine.t.sol` étendu (+4 : `setStableCo`,
-  garde `NotStableCo`). Relayer `intent.test.ts` migré (le cas `transfer3009` n'est plus rejeté)
-  + couverture des 3 nouveaux types.
-- **Suite d'invariants** — handler enrichi de `mintStable`/`redeemStable` bornés (same+cross,
-  jamais de revert) ; **INVARIANT 3** ajouté (`invariant_StableCoverage` :
-  `seur.totalSupply() <= depA.balanceOf(stableCo)`). `invariant_OnlyClientsHoldDEP` corrigé pour
-  inclure le solde DEP-A de StableCo ; `invariant_SettlementCoupling` et
-  `invariant_M1AggregateConstant` tiennent **sans modif** (un mint cross-bank fait bouger
-  `depA.totalSupply()` et `bankA.reserves()` du même montant).
+Redeem is symmetric with the opposite ordering (burn sEUR **before** reserves leave, via
+`settleFromStable`). The engine forces the StableCo side of the settlement itself
+(payee/payer = StableCo, bank = the cached `stableCoBank`) so the vault can never be
+tricked with a forged bank argument, and these entry points consume **no engine nonce** —
+replay protection lives in StableCo's own counter. When the client banks at Bank A, the
+identical call collapses to an intrabank book transfer: StableCo contains no
+same-bank/cross-bank branching at all.
 
-### Choix consignés (décisions utilisateur du 2026-06-26)
+### 3.3 Public onboarding — Option B
 
-1. **EIP-3009 standard complet** (transfer + receive + cancel), plutôt que `transferWithAuthorization`
-   seul — fidélité au pattern USDC production. `receiveWithAuthorization` (exige `msg.sender == to`)
-   est implémenté pour la conformité mais **non routé par le relayer** (le chemin gasless utilise
-   `transferWithAuthorization`).
-2. **Nonce séquentiel dédié dans StableCo** pour les intents mint/redeem (namespace séparé de
-   l'engine, même famille). Ne viole pas le piège #3 : on n'unifie jamais le séquentiel-engine et
-   l'aléatoire-3009 — trois compteurs coexistent (engine, StableCo, sEUR).
-3. **Events P2P sEUR = `Transfer` standard seul** (+ `AuthorizationUsed` sur le chemin gasless),
-   aucun event custom — sEUR reste un ERC-20 propre (pattern USDC). Les mouvements composés
-   mint/redeem émettent en revanche des events riches (`StableMinted`/`StableRedeemed`).
-4. **`setStableCo` re-settable par la banque centrale** + l'engine mémorise `stableCo`/`stableCoBank` ;
-   l'engine reste **le seul settler** (StableCo ne reçoit aucun rôle direct sur les DEP/wCBDC),
-   conformément au choix #2 de la Phase 3 (« StableCo aura son propre point d'entrée restreint »).
-5. **`STABLECO_OPERATOR_PK`** : l'opérateur StableCo signe désormais (déploiement + `pause()`) et
-   devient un rôle signataire serveur, cohérent avec le modèle clés individuelles (Phase 3, piège
-   no-mnemonic).
-6. **Burn sEUR sans allowance au redeem** : StableCo brûle le sEUR du redeemer (la signature du
-   `RedeemIntent` est l'autorisation), sûr car `BURNER_ROLE` n'est détenu que par StableCo —
-   nécessaire pour rester gasless.
+A connected wallet unknown to the system can act, not just observe: the frontend's
+**Join** modal calls `POST /faucet {address, bank}` (no client signature — the relayer's
+`FAUCET_ROLE` is the authority). The relayer simulates then submits
+`CommercialBank.onboard(visitor, FAUCET_AMOUNT)`, which registers **and** credits in one
+call, capped on-chain (`MAX_FAUCET_CREDIT`) and one-shot per address (second attempt
+reverts `AlreadyClient` → HTTP 409). The visitor then pays, mints and redeems with their
+own signatures — entirely gasless; sETH is only needed for the *direct* sEUR transfer path.
 
-### Vérification
+### 3.4 sEUR peer-to-peer — two paths
 
-`forge build` propre, `forge test` **151/151 verts** (128 unitaires + 17 intégration + 6 invariants
-à 128 runs × 64, **0 revert**, dont le nouvel `invariant_StableCoverage`), `forge fmt --check`
-propre, relayer `typecheck` + `vitest` (21) verts. **Dry-run `Deploy`** (EVM simulée) : genèse
-complète + StableCo/sEUR déployés, StableCo enregistré client de A, `deployments/local.json`
-enrichi (`stableCo`/`seur`), supply sEUR à 0 — fichier committé restauré après la vérification.
+- **Gasless**: the holder signs an EIP-3009 `TransferWithAuthorization` (random nonce,
+  `validBefore = now+1h`); the relayer checks the validity window and
+  `authorizationState`, then submits. No sETH needed.
+- **Direct**: the holder calls `transfer()` from their own wallet (pre-simulated by the
+  UI to surface any revert before the wallet popup). Requires sETH.
 
----
+Same money, two trust models — the desintermediation contrast is the point.
 
-## Phase 4.5 — Onboarding public via faucet (Option B) (2026-06-26)
+## 4. The relayer
 
-### Contexte
+Node 20 + TypeScript + Fastify + zod + viem. **Stateless by design**: no database, an
+in-memory idempotency cache that is disposable (after a restart, a replayed intent simply
+falls through to the on-chain nonce check). It holds exactly **one private key** — its own
+gas-paying EOA (plus the narrow on-chain `FAUCET_ROLE`); it cannot derive or impersonate
+any client.
 
-Décision produit (2026-06-26) : la démo publique adopte l'**Option B** — un wallet MetaMask connecté
-mais inconnu peut **agir**, pas seulement observer (cf. `docs/projet.md §7`). Un visiteur qui ne voit
-que les réserves sans rien pouvoir faire est inutile. Backend construit ici ; le bouton « Rejoindre »
-du front reste pour la Phase 5.
+**Boot sequence** (everything re-derived): load `deployments/<chain>.json` → assert the
+RPC's chainId matches → assert `RELAYER_PK` derives the deployed relayer address → resync
+the EOA nonce from the RPC's **pending** count (in-flight transactions from before a
+restart must not be double-spent) → initial fund check, then a periodic balance watcher
+(`MIN_RELAYER_BALANCE` alert, also exposed by `make fund-check`).
 
-### Construit
+**Endpoints**: `POST /intent` — a discriminated union (`payment` | `mint` | `redeem` |
+`transfer3009`) so one business endpoint absorbs every client-signed message; `POST
+/faucet` (Option B); `GET /health` (chain, addresses, balance, cache size, faucet amount).
 
-- **`contracts/src/CommercialBank.sol`** (étendu) — `FAUCET_ROLE` (moindre privilège) + `onboard(client,
-  amount)` : enregistre le visiteur **et** le crédite en une fois, plafonné par `MAX_FAUCET_CREDIT`
-  (1 000 000e6) et **one-shot par adresse** (revert `AlreadyClient` au 2ᵉ appel → crédit on-chain borné
-  par adresse). Réutilise les events de genèse (`ClientRegistered`/`ClientCredited`) et le check de ratio
-  soft (l'onboarding fait grossir M1 — réaliste). Le rôle ne peut **que** enregistrer+créditer : jamais
-  geler ni recâbler.
-- **Scripts** — `_grantFaucet(operator, bank, relayer)` (idempotent) dans `GenesisSeed` ; `Deploy` et
-  `Seed` accordent `FAUCET_ROLE` à **l'EOA du relayer** sur les deux banques. Le relayer garde donc sa
-  **seule clé** (pas de clé opérateur injectée), avec un pouvoir étroit.
-- **Relayer** — `POST /faucet {address, bank:"A"|"B"}` (sans signature client : le `FAUCET_ROLE` est
-  l'autorité, le montant est plafonné on-chain) ; simulate (décode `AlreadyClient` → 409, banque gelée /
-  rôle manquant → 400) puis envoi **par la même file de nonce** que `/intent`. `commercialBankAbi`,
-  `faucetRequestSchema`, `FAUCET_AMOUNT` (env, défaut 100k euros de test), `faucetAmount` exposé dans
-  `/health`. Smoke inchangé.
-- **Tests** — `CommercialBank.t.sol` +4 (`onboard` : register+credit, plafond `FaucetAmountTooHigh`,
-  one-shot `AlreadyClient`, garde de rôle) ; relayer +4 (`faucetRequestSchema`). Invariants intacts
-  (`onboard` hors handler, comme `creditClient`).
+**Pre-check pipeline** (sequentially-nonced intents): idempotency cache (same digest →
+same original response, upgraded by a fire-and-forget receipt watcher; `failed` entries
+are evicted so a retry is allowed) → local EIP-712 signature verification → wall-clock
+deadline → exact on-chain nonce equality (mismatch → `409 nonce_mismatch`) →
+`simulateContract`, decoding custom errors into structured 400/409 responses → **serialized
+send queue** (one transaction in flight at a time, so intents never race for the relayer's
+own nonce). Every pre-check exists only to avoid wasting gas on doomed transactions —
+authorization is enforced on-chain, nowhere else.
 
-### Choix consignés (décision utilisateur 2026-06-26)
+## 5. The indexer
 
-1. **Le relayer porte l'onboarding** (pas de service séparé), via un `FAUCET_ROLE` **étroit** accordé à
-   sa propre EOA — il garde une clé unique. La frontière « relayer = gas-only » de la Phase 3 est
-   relâchée **délibérément mais au minimum** : compromission du relayer = création de dépôts de test
-   plafonnés, jamais un gel de banque.
-2. **One-shot par adresse + plafond on-chain** : garantie au niveau contrat (indépendante du rate-limit
-   off-chain, qui reste un durcissement futur — surface de spam = gas du relayer, déjà notée en Phase 3).
-3. Le visiteur n'a **pas besoin de sETH** pour rejoindre/mint/payer (gasless) ; le sETH n'est utile que
-   pour le P2P sEUR **direct** → lien externe vers un faucet Sepolia (front Phase 5).
+Ponder + a custom REST API (Hono) on :42069. It watches the five event-emitting contracts
+(engine, both banks, StableCo, sEUR) from the deploy block (`startBlock` — never block 0)
+and projects the rich events into 8 derived tables (payments, stable flows, ratio
+breaches, freeze history, client registry/events, sEUR transfers and running holder
+balances). The REST layer returns predictable JSON with bigints as decimal strings.
 
-### Vérification
+This does **not** violate the no-database rule: the store is a read-side cache, fully
+rebuildable from logs — it is never pushed, never backed up, and deleting it loses
+nothing. On Sepolia the indexer uses its own getLogs-friendly RPC failover pool with wide
+fixed ranges and 15 s polling; history consequently lags the head by ~30 s–2 min, while
+live balances (direct RPC reads in the frontend) stay instant. Full rationale and the
+hard-won RPC lessons: [indexer.md](indexer.md).
 
-`forge test` **155/155 verts** (132 unitaires + 17 intégration + 6 invariants, 0 revert), `forge fmt
---check` propre, relayer `typecheck` + `vitest` (25) verts, **dry-run `Deploy`** OK (grant `FAUCET_ROLE`
-au relayer sur A et B), `deployments/local.json` committé restauré.
+## 6. The frontend
 
----
+Vite + React + wagmi v2/viem. The connected address is resolved to a role **on-chain**
+(`hasRole` / `isClient` — never from a local mapping) and rendered as one of five views:
+client, bank operator (A/B), StableCo, central bank, observer; a view switcher lets anyone
+open any dashboard **read-only** (data is public; actions stay gated on-chain — the UI
+gating is UX, not security). Key mechanics:
 
-## Phase 5 — Frontend (5 vues par rôle) + indexeur Ponder (2026-06-27)
+- **Blocking UX**: a global pending lock disables every action button while a transaction
+  is in flight (no bursts — sequential nonces make them pointless anyway); per-action
+  progress, hash and Etherscan link render in-section (`TxStatus`).
+- **Pre-simulation** of every direct write, so the exact custom error surfaces *before*
+  the wallet popup; receipts are checked for `status: reverted` (a mined revert does not
+  throw) with a 120 s timeout.
+- **Chain pinning**: `VITE_CHAIN` selects which committed deployment the app targets;
+  reads are pinned to that chain (`syncConnectedChain: false`) regardless of the wallet's
+  network, and writes assert an explicit `chainId` (loud failure + a switch-network banner
+  instead of silently targeting the wrong chain).
+- **Freshness**: event watchers on the five contracts invalidate all reads on any new
+  event; a slow 15 s poll is only the safety net; every confirmed action invalidates
+  everything.
 
-### Construit
+Details and UX decisions: [frontend.md](frontend.md).
 
-- **`indexer/`** — indexeur **Ponder 0.16.6** (TypeScript). `ponder.config.ts` lit
-  `deployments/<chain>.json` (adresses + `START_BLOCK`, piège #6) et déclare 5 contrats
-  (SettlementEngine, BankA, BankB, StableCo, SEUR) ; `ponder.schema.ts` (8 tables dérivées :
-  `payment`, `stableFlow`, `ratioBreach`, `bankStatusEvent`, `clientEvent`, `client`,
-  `seurTransfer`, `seurHolder`, uint256 via le type `bigint` de Ponder) ; `src/index.ts`
-  (17 fonctions d'indexation, A/B partagent des helpers typés via `Context["db"]`) ;
-  **`src/api/index.ts`** — API REST custom (Hono + CORS) renvoyant un JSON prédictible au
-  front (`/payments`, `/stable-flows`, `/ratio-breaches`, `/bank-status`, `/clients`,
-  `/seur-transfers`, `/seur-holders`), bigints sérialisés en chaînes décimales.
-- **`frontend/`** — app **Vite + React + TypeScript + wagmi v2 + viem**. Couche `lib`
-  (ABIs propres au projet, `directory` typé depuis `local.json` + constantes de rôles +
-  annuaire, `eip712`/`intents` miroir du relayer, client `relayer`, client `ponder`,
-  `metrics` santé/couverture, `roles` résolution pure, `format`). Hooks (`useReads`
-  snapshot système + soldes, `useRole`, `usePonder`, `useActions`). **UX bloquante**
-  (`PendingProvider` + overlay plein écran : signé → soumis → confirmé, invalidation des
-  lectures au succès). **5 vues par rôle** (Observateur, Client, Opérateur banque, StableCo,
-  Banque centrale) résolues via `hasRole`/`isClient` on-chain. Formulaires : paiement
-  (décomposition pédagogique intra/inter, EIP-712, relais gasless), mint/redeem sEUR, **P2P
-  sEUR à deux boutons** (gasless EIP-3009 / direct + rappel sETH et lien faucet), **modale
-  « Rejoindre » Option B** (`POST /faucet`, bascule observateur→client). 4 suites `vitest`
-  (roles, metrics, format, intents, **25 tests**).
-- **Infra** — Makefile (`indexer-dev`, `front-dev`, `front-build`) ; `docker-compose.yml`
-  étendu (services `ponder` + `front` aux côtés de `relayer`) + `indexer/Dockerfile`,
-  `frontend/Dockerfile` (build au contexte racine pour atteindre `deployments/`) + `nginx.conf` ;
-  `.env.example` (VITE_*, PONDER_RPC_URL) ; `.gitignore` (`.ponder/`).
+## 7. Keys and accounts — no mnemonic, by design
 
-### Choix consignés (décisions utilisateur du 2026-06-26/27)
+There is deliberately **no HD mnemonic** anywhere: a single seed would be the maximal
+root secret *and* would let the backend derive the clients' keys — i.e. impersonate them,
+breaking "the EOA decides" at its root. Instead:
 
-1. **Stack** : Vite + React + wagmi v2/viem (verrouillé) ; **adresses lues directement de
-   `deployments/<chain>.json`** (wrapper typé, aucun changement au script de deploy).
-2. **ABIs par projet** (et non un dossier partagé) : aligné sur la convention déjà posée par
-   `relayer/src/abi.ts`. Une tentative de dossier `abis/` partagé a été abandonnée — un module
-   partagé entre projets npm séparés casse la résolution de `viem` (remontée d'arborescence) ;
-   chaque projet (`relayer`, `indexer`, `frontend`) écrit ses ABIs minimales. Contrats gelés →
-   risque de divergence nul.
-3. **Indexeur Ponder intégré dès la Phase 5** : DB *dérivée* (reconstructible des logs, ne viole
-   pas « pas de DB »). **API REST custom plutôt que la GraphQL auto-générée** → forme JSON
-   maîtrisée, découplée du schéma GraphQL.
-4. **Métriques** : agrégats/historique via l'API Ponder ; soldes/nonces *live* via view calls
-   viem ; **liveness** par polling léger (4–5 s) + invalidation de toutes les lectures après
-   chaque action confirmée. Nonces séquentiels lus **frais** au clic (pas en cache).
-5. **UX bloquante** = overlay plein écran (signé/soumis/confirmé) ; généralise la règle
-   « pas de rafales » du nonce séquentiel (limite connue Phase 3).
-6. **Onboarding Option B = `POST /faucet`** (relayer + `FAUCET_ROLE`), conforme au backend
-   construit en Phase 4.5. (À noter : `docs/projet.md §7` décrit encore l'ancienne variante
-   « opérateur signe register+credit » — à rafraîchir en Phase 6 ; aucune déviation de décision
-   LOCKED côté code.)
-7. **Cibles** : dev hôte d'abord (Anvil), Sepolia en Phase 6. `local.json` committé est périmé
-   (sans `stableCo`/`seur`, hérité de Phase 4) → le front affiche un écran « Déploiement
-   incomplet » tant qu'un `make deploy-local` n'a pas régénéré un fichier complet.
+| Account | Custody | In `.env` |
+|---|---|---|
+| Central bank operator (deployer), Bank A/B operators, StableCo operator | Sign deploys/institutional txs | Individual `*_PK` (server-signing roles) |
+| Relayer | Long-running service; gas + `FAUCET_ROLE` only | `RELAYER_PK` (its single key) |
+| Clients (alice1/2, bob1/2, visitors) | MetaMask only — never the backend | `*_ADDRESS` only |
 
-### Vérification
+The boundary is cryptographic, not conventional: the relayer *cannot* forge a client
+signature. Locally, `make anvil` uses Anvil's default accounts, whose well-known public
+keys are exactly what `.env.example` ships. On Sepolia the operator keys are throwaway
+testnet keys in the gitignored `.env` (an encrypted Foundry keystore was considered and
+documented as the production posture; the deploy broadcasts as four distinct operators,
+which a single `--account` keystore does not cover). The only client key that ever
+appears is `ALICE1_PK`, used by the local smoke script alone.
 
-`frontend` : **`tsc --noEmit` propre + `vitest` 25/25 verts**. `indexer` : **`ponder codegen` +
-`tsc --noEmit` propres**. Contrats et relayer non modifiés (155 `forge test` / 25 relayer
-`vitest` inchangés). **E2E hôte** (runbook) : `make anvil` → `make deploy-local` (régénère un
-`local.json` complet) → `make relayer-dev` + `make indexer-dev` + `make front-dev`, MetaMask sur
-localhost:8545 — à dérouler pour valider les 5 vues, l'Option B et les deux chemins P2P. Les
-services Docker (`make up`) sont fournis mais restent à valider (étape « finalisation Docker »).
+## 8. Deployment and environments
 
-### Affinements UX (2026-06-28)
+**Anvil for daily dev, Sepolia for the live demo.** One `make deploy-sepolia` performs the
+full genesis — deploy, wire, allowlist, mint M0, register/credit clients, grant
+`FAUCET_ROLE`, fund actors with sETH (top-up semantics, idempotent) — and verifies all 9
+instances on Etherscan inline (`--verify`, constructor args resolved from the broadcast,
+nested deployments included). It writes `deployments/<chain>.json` — addresses of the 9
+contracts, the 8 actors and the relayer, `chainId`, `startBlock` — which is **committed**
+and becomes the single wiring source for relayer, indexer and frontend. `make seed`
+replays the genesis idempotently (useful to top up drained gas balances without
+redeploying). The live deployment: chainId 11155111, startBlock 11180344, deployed and
+verified 2026-07-01.
 
-- **Détection des reverts** : `confirm()` vérifie `receipt.status` (une tx minée-mais-revertée
-  résout un reçu `reverted` sans lever) → plus de faux succès. Les actions directes sont
-  **pré-simulées** (`simulateContract`) avant envoi : raison du revert décodée en français
-  (ex. `ClientHasBalance`, `AlreadyClient`) et pas de pop-up wallet voué à l'échec. Timeout de
-  confirmation (120 s) → l'UI ne reste jamais bloquée.
-- **Feedback par section** (`TxStatus`) : indicateur de chargement pendant le minage, puis
-  hash + lien Etherscan (sur Sepolia) affiché **dès que connu**, persistant ~30 s ; réinitialisé
-  au changement de compte. Remplace l'overlay plein écran + le toast global (le verrou « pas de
-  nouvelle action » reste via les boutons désactivés `isBusy`).
-- **Rafraîchissement par events** (`useChainWatcher` + `useWatchContractEvent`) : invalidation
-  instantanée des lectures sur tout nouvel event ; le polling devient un filet de sécurité lent
-  (15 s) → moins de bruit RPC, mises à jour cross-acteurs immédiates.
-- **Thème clair** « sérieux », validations de montant (boutons désactivés + rappel de solde
-  neutre), skeletons de chargement, et clarification UI **DEP = euros de banque commerciale /
-  wCBDC = euros de banque centrale / sEUR = stablecoin**.
+**RPC allocation on Sepolia** (one endpoint per workload — the lesson of trap #9):
+
+| Consumer | Endpoint | Why |
+|---|---|---|
+| Relayer + deploys | `SEPOLIA_RPC_URL` (e.g. Alchemy) | Low volume, no `eth_getLogs` |
+| Indexer | `PONDER_RPC_URL` failover pool (drpc, tenderly) | Backfill needs wide `eth_getLogs` ranges — Alchemy Free hard-caps them at 10 blocks |
+| Frontend | viem's default public RPC (batched), optional `VITE_SEPOLIA_RPC_URL` | Browser-side; a key here would ship in the JS bundle |
+
+## 9. Build history (condensed)
+
+The project was built in strict phases, each gated on green tests (unit + integration +
+invariants), `forge fmt`, and a written phase note. Condensed record — the full
+incremental notes live in this file's git history.
+
+| Phase | Date (2026) | Delivered |
+|---|---|---|
+| 1 — M0 | 06-10 | `WCBDC` + `CentralBank`, allowlist-in-token, atomic wiring pattern; genesis recalibrated (1M wCBDC, 12.5% vs 10%). 33 tests. |
+| 2 — M1 + settlement | 06-12 | Banks, deposit tokens, engine with a temporary direct path; intrabank = true book transfer (`SETTLER_ROLE`, not burn+mint); permissionless `checkReserveRatio`; invariant suite bootstrapped, `fail_on_revert`. 100 tests. |
+| 3 — Intents + relayer | 06-13 | EIP-712 `PaymentIntent` + sequential nonces; direct path **removed** (engine relay-agnostic); stateless relayer (pre-checks, idempotency, boot nonce resync); **no-mnemonic key model**; full genesis scripts + `deployments/<chain>.json`. 112 tests. |
+| 4 — Stablecoin | 06-26 | `StableCo` + `StableEUR` (full EIP-3009); cross-bank mint/redeem composed via restricted `settleTo/FromStable`; coverage-safe ordering; coverage invariant. 151 tests. |
+| 4.5 — Option B | 06-26 | `onboard()` behind a narrow `FAUCET_ROLE` granted to the relayer's own EOA; on-chain cap + one-shot per address; `POST /faucet`. 155 tests. |
+| 5 — Frontend + indexer | 06-27/28 | Five role views + read-only explorer; blocking UX with in-section `TxStatus`; pre-simulated writes; event-driven refresh; Ponder indexer + custom REST API. 25+25 vitest. |
+| 6a — Sepolia live | 07-01/02 | Docker dropped (Makefile host targets only); one-shot deploy + inline Etherscan verify of all 9 instances; front chain-select (`VITE_CHAIN`) + chain-pinned reads; indexer RPC failover pool. **Full E2E user simulation green on live Sepolia**: onboarding, intrabank/interbank payments, same- and cross-bank mint/redeem, gasless 3009 transfer, replay idempotence, stale-nonce 409 — all seven invariants re-verified on-chain to the cent. |
+| 6b — Docs & release | 07 | English documentation set, README, MIT license, `v1.0.0` tag — no code changes. |
+
+Final test surface: **155 Foundry tests** (132 unit, 17 integration, 6 invariant suites at
+128 runs × depth 64 with zero tolerated reverts) + **25 relayer** and **25 frontend**
+vitest suites, `tsc --noEmit` clean across all three TypeScript projects.

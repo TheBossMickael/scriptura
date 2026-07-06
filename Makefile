@@ -18,7 +18,7 @@ else
 RPC_FLAG = --rpc-url $(LOCAL_RPC)
 endif
 
-.PHONY: build test fmt fmt-check anvil deploy-local deploy-sepolia seed fund-check relayer-dev indexer-dev front-dev front-build
+.PHONY: build test fmt fmt-check anvil deploy-local deploy-sepolia seed fund-check relayer indexer front front-build
 
 build:
 	cd contracts && forge build
@@ -53,17 +53,17 @@ fund-check:
 	@$(ENV); CHAIN_NAME=$(CHAIN) $(TSX) relayer/scripts/fund-check.ts
 
 # Relayer on the host with .env loaded (CHAIN=local|sepolia).
-relayer-dev:
+relayer:
 	@$(ENV); CHAIN_NAME=$(CHAIN) $(TSX) watch relayer/src/index.ts
 
 # Ponder indexer on the host (reads deployments/<chain>.json, serves its API on :42069).
 # Calls the local ponder binary directly (npm-run shims strip env under MSYS2).
-indexer-dev:
+indexer:
 	@$(ENV); cd indexer && CHAIN_NAME=$(CHAIN) node_modules/.bin/ponder dev
 
 # Vite dev server for the frontend (http://localhost:5173). For local dev the defaults
 # (relayer :3001, indexer :42069) need no env; override via VITE_* in .env if needed.
-front-dev:
+front:
 	cd frontend && npm run dev
 
 # Production build of the frontend (static assets in frontend/dist).
